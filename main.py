@@ -39,10 +39,12 @@ def calibrate_noise():
 
 def wait_for_wake_word():
     print("\n[系统状态] 正在加载唤醒模型，请稍候...")
-    # 1. 初始化唤醒词模型（自带模型，第一次运行会自动下载几MB的模型文件）
-    # 可选内置词: "alexa", "hey_mycroft", "hey_jarvis", "timer", "weather"
-    WAKE_WORD = "hey_jarvis"
-    oww_model = Model(wakeword_models=[WAKE_WORD], inference_framework="onnx")
+    # 动态获取当前 main.py 所在的文件夹路径，并拼上模型文件名
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(current_dir, "hey_jarvis.onnx")
+    
+    # 直接加载打包好的本地模型文件！
+    oww_model = Model(wakeword_models=[model_path], inference_framework="onnx")
 
     print("[系统状态] 模型加载完成，准备接管麦克风...")
 
