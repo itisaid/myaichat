@@ -16,6 +16,7 @@ import dashscope
 from dashscope.audio.asr import Recognition
 import pyaudio
 import numpy as np
+import time
 from openwakeword.model import Model
 
 
@@ -37,11 +38,16 @@ def calibrate_noise():
         print(f"[错误] 麦克风初始化失败: {e}")
 
 def wait_for_wake_word():
-    """纯本地离线监听唤醒词，无需 API Key，完全免费"""
+    print("\n[系统状态] 正在加载唤醒模型，请稍候...")
     # 1. 初始化唤醒词模型（自带模型，第一次运行会自动下载几MB的模型文件）
     # 可选内置词: "alexa", "hey_mycroft", "hey_jarvis", "timer", "weather"
     WAKE_WORD = "hey_jarvis"
     oww_model = Model(wakeword_models=[WAKE_WORD], inference_framework="onnx")
+
+    print("[系统状态] 模型加载完成，准备接管麦克风...")
+
+    # 强制等待 1 秒，让前面的 calibrate_noise 完全释放麦克风硬件资源！
+    time.sleep(1) 
     
     # 2. 配置麦克风参数 (16000Hz, 单声道, 16bit)
     FORMAT = pyaudio.paInt16
