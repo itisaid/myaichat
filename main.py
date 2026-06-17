@@ -14,6 +14,10 @@ import tempfile
 import speech_recognition as sr
 import dashscope
 from dashscope.audio.asr import Recognition
+import pyaudio
+import numpy as np
+from openwakeword.model import Model
+
 
 # ================= 1. 配置区域 =================
 load_dotenv()
@@ -32,6 +36,52 @@ def calibrate_noise():
     except Exception as e:
         print(f"[错误] 麦克风初始化失败: {e}")
 
+def wait_for_wake_word():
+    """纯本地离线监听唤醒词，无需 API Key，完全免费"""
+    # 1. 初始化唤醒词模型（自带模型，第一次运行会自动下载几MB的模型文件）
+    # 可选内置词: "alexa", "hey_mycroft", "hey_jarvis", "timer", "weather"
+    WAKE_WORD = "hey_jarvis"
+    oww_model = Model(wakeword_models=[WAKE_WORD], inference_framework="onnx")
+    
+    # 2. 配置麦克风参数 (16000Hz, 单声道, 16bit)
+    FORMAT = pyaudio.paInt16
+    CHANNELS = 1
+    RATE = 16000
+    CHUNK = 1280  # 每次读取的数据块大小
+    
+    pa = pyaudio.PyAudio()
+    mic_stream = pa.open(
+        format=FORMAT,
+        channels=CHANNELS,
+        rate=RATE,
+        input=True,
+        frames_per_buffer=CHUNK
+    )
+
+    print(f"\n💤 [休眠中] 等待唤醒词 (请喊 '{WAKE_WORD.replace('_', ' ')}')...")
+    
+    try:
+        while True:
+            # 读取一小段音频
+            pcm = mic_stream.read(CHUNK, exception_on_overflow=False)
+            # openwakeword 需要 numpy 数组格式
+            audio_data = np.frombuffer(pcm, dtype=np.int16)
+            
+            # 进行离线预测
+            prediction = oww_model.predict(audio_data)
+            
+            # prediction 返回一个字典，比如 {'hey_jarvis': 0.85}，值是 0 到 1 的置信度
+            for mdl_name, score in prediction.items():
+                # 设置一个阈值，比如 0.5。如果环境太吵容易误唤醒，可以调高到 0.7
+                if score > 0.5:
+                    print(f"\n🔔 [唤醒] 检测到唤醒词！(置信度: {score:.2f})")
+                    return True
+    finally:
+        # 释放麦克风给后续的录音转文字 (ASR) 使用
+        mic_stream.stop_stream()
+        mic_stream.close()
+        pa.terminate()
+        
 def record_audio():
     with sr.Microphone(sample_rate=16000) as source:
         try:
@@ -118,8 +168,13 @@ async def smart_speaker_loop():
     calibrate_noise()
 
     while True:
-        # 更新网页 UI 状态
-        await manager.broadcast(json.dumps({"type": "status", "text": "请说话..."}))
+        # --- 新增：休眠等待唤醒阶段 ---
+        await manager.broadcast(json.dumps({"type": "status", "text": "💤 休眠中 (喊 Jarvis 唤醒)"}))
+        # 阻塞在此，直到听到唤醒词才会往下走
+        await asyncio.to_thread(wait_for_wake_word) 
+        
+        # --- 唤醒后的录音阶段 ---
+        await manager.broadcast(json.dumps({"type": "status", "text": "✨ 我在！请说话..."}))
         
         # 1. 异步执行真实录音
         wav_file = await asyncio.to_thread(record_audio)
