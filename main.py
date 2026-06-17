@@ -39,53 +39,51 @@ def calibrate_noise():
 
 def wait_for_wake_word():
     print("\n[系统状态] 正在加载唤醒模型，请稍候...")
+    
     # 动态获取当前 main.py 所在的文件夹路径，并拼上模型文件名
     current_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(current_dir, "hey_jarvis.onnx")
     
-    # 直接加载打包好的本地模型文件！
+    # 直接加载我们打包好的本地模型文件！
     oww_model = Model(wakeword_models=[model_path], inference_framework="onnx")
-
+    
     print("[系统状态] 模型加载完成，准备接管麦克风...")
-
-    # 强制等待 1 秒，让前面的 calibrate_noise 完全释放麦克风硬件资源！
     time.sleep(1) 
     
-    # 2. 配置麦克风参数 (16000Hz, 单声道, 16bit)
     FORMAT = pyaudio.paInt16
     CHANNELS = 1
     RATE = 16000
-    CHUNK = 1280  # 每次读取的数据块大小
+    CHUNK = 1280
     
     pa = pyaudio.PyAudio()
-    mic_stream = pa.open(
-        format=FORMAT,
-        channels=CHANNELS,
-        rate=RATE,
-        input=True,
-        frames_per_buffer=CHUNK
-    )
+    
+    try:
+        mic_stream = pa.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RATE,
+            input=True,
+            frames_per_buffer=CHUNK
+        )
+    except Exception as e:
+        print(f"❌ [错误] 麦克风被占用，无法打开: {e}")
+        return False
 
-    print(f"\n💤 [休眠中] 等待唤醒词 (请喊 '{WAKE_WORD.replace('_', ' ')}')...")
+    print(f"\n💤 [休眠中] 等待唤醒词 (请喊 'Hey Jarvis')...")
     
     try:
         while True:
-            # 读取一小段音频
             pcm = mic_stream.read(CHUNK, exception_on_overflow=False)
-            # openwakeword 需要 numpy 数组格式
             audio_data = np.frombuffer(pcm, dtype=np.int16)
             
-            # 进行离线预测
             prediction = oww_model.predict(audio_data)
             
-            # prediction 返回一个字典，比如 {'hey_jarvis': 0.85}，值是 0 到 1 的置信度
+            # 因为指定了具体路径，prediction 的 key 就是绝对路径的名字
             for mdl_name, score in prediction.items():
-                # 设置一个阈值，比如 0.5。如果环境太吵容易误唤醒，可以调高到 0.7
-                if score > 0.5:
+                if score > 0.4:
                     print(f"\n🔔 [唤醒] 检测到唤醒词！(置信度: {score:.2f})")
                     return True
     finally:
-        # 释放麦克风给后续的录音转文字 (ASR) 使用
         mic_stream.stop_stream()
         mic_stream.close()
         pa.terminate()
