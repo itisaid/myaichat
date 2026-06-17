@@ -80,7 +80,7 @@ def wait_for_wake_word():
             
             # 因为指定了具体路径，prediction 的 key 就是绝对路径的名字
             for mdl_name, score in prediction.items():
-                if score > 0.4:
+                if score > 0.2:
                     print(f"\n🔔 [唤醒] 检测到唤醒词！(置信度: {score:.2f})")
                     return True
     finally:
