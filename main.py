@@ -170,19 +170,32 @@ async def websocket_endpoint(websocket: WebSocket):
 async def smart_speaker_loop():
     await asyncio.sleep(2)
     
+    # 启动时自动预生成“我在”的本地音频，保证唤醒零延迟
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    wake_audio_path = os.path.join(current_dir, "wozai.mp3")
+    if not os.path.exists(wake_audio_path):
+        print("\n[系统状态] 正在预生成唤醒提示音...")
+        tts = edge_tts.Communicate("我在", "zh-CN-XiaoxiaoNeural")
+        await tts.save(wake_audio_path)
+
     # 提前校准环境基准噪音
     calibrate_noise()
 
     while True:
-        # --- 新增：休眠等待唤醒阶段 ---
-        await manager.broadcast(json.dumps({"type": "status", "text": "💤 休眠中 (喊 Jarvis 唤醒)"}))
+        # --- 休眠等待唤醒阶段 ---
+        await manager.broadcast(json.dumps({"type": "status", "text": "💤 休眠中 (喊Hey Jarvis 唤醒)"}))
         # 阻塞在此，直到听到唤醒词才会往下走
         await asyncio.to_thread(wait_for_wake_word) 
-        
-        # --- 唤醒后的录音阶段 ---
+    
+        # --- 唤醒成功，播放“我在” ---
         await manager.broadcast(json.dumps({"type": "status", "text": "✨ 我在！请说话..."}))
+        pygame.mixer.music.load(wake_audio_path)
+        pygame.mixer.music.play()
+        # 等待提示音播放完再开始录音，防止麦克风把自己说的“我在”录进去
+        while pygame.mixer.music.get_busy():
+            await asyncio.sleep(0.1)
         
-        # 1. 异步执行真实录音
+        # 异步执行真实录音
         wav_file = await asyncio.to_thread(record_audio)
         
         if wav_file is None:
@@ -190,7 +203,7 @@ async def smart_speaker_loop():
             
         await manager.broadcast(json.dumps({"type": "status", "text": "语音识别中..."}))
         
-        # 2. 调用阿里 ASR 将录音转文字
+        # 调用阿里 ASR 将录音转文字
         user_text = ""
         try:
             response = await asyncio.to_thread(call_ali_asr, wav_file)
@@ -222,7 +235,7 @@ async def smart_speaker_loop():
         # 将识别到的文字推送到网页前端
         await manager.broadcast(json.dumps({"type": "user_msg", "text": user_text}))
         
-        # --- 步骤 2: 调用国内大模型 (LLM) ---
+        # --- 调用国内大模型 (LLM) ---
         # 【重点】这里展示如何根据前端选择的模型，请求不同的国内API
         current_model = app_state["model"]
         await asyncio.sleep(1) # 模拟网络请求耗时
@@ -257,8 +270,7 @@ async def smart_speaker_loop():
         else:
             ai_reply = "我不知道我在用什么模型..."
 
-        # --- 步骤 3: 文字转语音 (TTS) 与播放 ---
-# --- 步骤 3: 文字转语音 (TTS) 与播放 ---
+        # --- 文字转语音 (TTS) 与播放 ---
         await manager.broadcast(json.dumps({"type": "status", "text": "正在说话..."}))
         await manager.broadcast(json.dumps({"type": "ai_msg", "text": ai_reply}))
         
