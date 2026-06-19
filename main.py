@@ -31,7 +31,8 @@ recognizer = sr.Recognizer()
 def calibrate_noise():
     print("\n[系统提示] 🎤 正在校准环境基准噪音，请保持安静 1 秒钟...")
     try:
-        with sr.Microphone(sample_rate=16000) as global_source:
+        # 【修复】去掉强制的 sample_rate=16000，让系统自动适应麦克风
+        with sr.Microphone() as global_source:
             recognizer.adjust_for_ambient_noise(global_source, duration=1)
         print("[系统提示] ✅ 噪声校准完成！设备已准备就绪。")
     except Exception as e:
@@ -39,48 +40,55 @@ def calibrate_noise():
 
 def wait_for_wake_word():
     print("\n[系统状态] 正在加载唤醒模型，请稍候...")
-    
-    # 动态获取当前 main.py 所在的文件夹路径，并拼上模型文件名
     current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 请确保文件夹里有这个模型文件
     model_path = os.path.join(current_dir, "hey_jarvis.onnx")
     
-    # 直接加载我们打包好的本地模型文件！
-    oww_model = Model(wakeword_models=[model_path], inference_framework="onnx")
+    # 【修复 1】兼容 Python 3.13 自动降级的 openwakeword 旧版本参数
+    try:
+        oww_model = Model(wakeword_models=[model_path], inference_framework="onnx")
+    except TypeError:
+        # 如果是老版本，自动使用旧参数名
+        oww_model = Model(wakeword_model_paths=[model_path])
     
     print("[系统状态] 模型加载完成，准备接管麦克风...")
     time.sleep(1) 
     
-    FORMAT = pyaudio.paInt16
-    CHANNELS = 1
-    RATE = 16000
-    CHUNK = 1280
-    
     pa = pyaudio.PyAudio()
     
+    # 【修复 2】解决硬件不支持 16000Hz 的 paInvalidSampleRate 问题
     try:
-        mic_stream = pa.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RATE,
-            input=True,
-            frames_per_buffer=CHUNK
-        )
+        # 先尝试标准的 16000Hz
+        mic_stream = pa.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=1280)
+        downsample_factor = 1
     except Exception as e:
-        print(f"❌ [错误] 麦克风被占用，无法打开: {e}")
-        return False
+        print(f"⚠️ 麦克风不支持 16000Hz，自动开启 48000Hz 兼容模式...")
+        try:
+            # 如果失败，开启大多数麦克风都支持的 48000Hz
+            mic_stream = pa.open(format=pyaudio.paInt16, channels=1, rate=48000, input=True, frames_per_buffer=1280 * 3)
+            downsample_factor = 3
+        except Exception as e2:
+            print(f"❌ [错误] 麦克风被占用或彻底无法打开，请检查硬件！")
+            return False
 
-    print(f"\n💤 [休眠中] 等待唤醒词 (请喊 'Hey Jarvis')...")
+    print(f"\n💤 [休眠中] 等待唤醒词...")
     
     try:
         while True:
-            pcm = mic_stream.read(CHUNK, exception_on_overflow=False)
-            audio_data = np.frombuffer(pcm, dtype=np.int16)
+            # 读取数据
+            if downsample_factor == 1:
+                pcm = mic_stream.read(1280, exception_on_overflow=False)
+                audio_data = np.frombuffer(pcm, dtype=np.int16)
+            else:
+                # 48000 模式：每次读 3 倍数据，通过代码切片 [::3] 强行降维到 16000，完美喂给唤醒模型！
+                pcm = mic_stream.read(1280 * 3, exception_on_overflow=False)
+                audio_data = np.frombuffer(pcm, dtype=np.int16)[::3]
             
             prediction = oww_model.predict(audio_data)
             
-            # 因为指定了具体路径，prediction 的 key 就是绝对路径的名字
             for mdl_name, score in prediction.items():
-                if score > 0.2:
+                if score > 0.4:
                     print(f"\n🔔 [唤醒] 检测到唤醒词！(置信度: {score:.2f})")
                     return True
     finally:
@@ -89,13 +97,15 @@ def wait_for_wake_word():
         pa.terminate()
         
 def record_audio():
-    with sr.Microphone(sample_rate=16000) as source:
+    # 【修复】去掉强制的 sample_rate=16000
+    with sr.Microphone() as source:
         try:
             audio = recognizer.listen(source, timeout=10, phrase_time_limit=10)
         except sr.WaitTimeoutError:
             return None
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
-            tf.write(audio.get_wav_data())
+            # 【修复】导出WAV文件时，由代码强制重采样到阿里要求的 16000Hz
+            tf.write(audio.get_wav_data(convert_rate=16000))
             return tf.name
 
 def call_ali_asr(wav_file_path):
