@@ -19,6 +19,7 @@ from config import (
     load_system_prompt,
 )
 from llm import get_provider
+from llm.types import ChatOptions, ChatResult
 from tts import synthesize
 import text_debug
 from websocket_manager import ConnectionManager
@@ -67,17 +68,46 @@ async def smart_speaker_loop(manager: ConnectionManager):
 
         await manager.broadcast(json.dumps({"type": "user_msg", "text": user_text}))
 
+        options = ChatOptions(
+            enable_thinking=app_state["enable_thinking"],
+            enable_search=app_state["enable_search"],
+        )
+
+        if options.enable_search:
+            await manager.broadcast(
+                json.dumps({"type": "search_status", "status": "pending"})
+            )
+
+        await manager.broadcast_status("思考中...", "transcribing")
+
         try:
             provider = get_provider(app_state["model"])
-            ai_reply = await provider.chat(user_text, system_prompt=load_system_prompt())
+            result = await provider.chat(
+                user_text, system_prompt=load_system_prompt(), options=options
+            )
         except ValueError:
-            ai_reply = "我不知道我在用什么模型..."
+            result = ChatResult(content="我不知道我在用什么模型...")
+
+        if options.enable_search:
+            await manager.broadcast(
+                json.dumps(
+                    {
+                        "type": "search_status",
+                        "status": result.search_status,
+                    }
+                )
+            )
+
+        if result.reasoning:
+            await manager.broadcast(
+                json.dumps({"type": "thinking_msg", "text": result.reasoning})
+            )
 
         await manager.broadcast_status("正在说话...", "speaking")
-        await manager.broadcast(json.dumps({"type": "ai_msg", "text": ai_reply}))
+        await manager.broadcast(json.dumps({"type": "ai_msg", "text": result.content}))
 
         try:
-            await synthesize(ai_reply, str(REPLY_AUDIO_PATH))
+            await synthesize(result.content, str(REPLY_AUDIO_PATH))
             await play_audio(REPLY_AUDIO_PATH)
         except Exception as e:
             print(f"❌ 语音合成或播放失败: {e}")

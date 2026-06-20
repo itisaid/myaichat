@@ -42,6 +42,40 @@
         }
 
         .status-container { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+        .search-icon {
+            width: 14px;
+            height: 14px;
+            flex-shrink: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            line-height: 1;
+            border-radius: 50%;
+        }
+
+        .search-icon.visible { display: inline-flex; }
+
+        .search-icon.pending {
+            background-color: #888;
+            animation: searchPulse 1s infinite;
+        }
+
+        .search-icon.success {
+            color: #4caf50;
+            font-weight: bold;
+        }
+
+        .search-icon.failed {
+            color: #ff7043;
+            font-weight: bold;
+        }
+
+        @keyframes searchPulse {
+            0%, 100% { opacity: 0.4; transform: scale(0.9); }
+            50% { opacity: 1; transform: scale(1.1); }
+        }
         
         .status-dot {
             width: 12px; height: 12px; border-radius: 50%;
@@ -140,6 +174,36 @@
             border-color: var(--accent-color);
         }
 
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .option-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.75rem;
+            color: #aaa;
+            cursor: pointer;
+            white-space: nowrap;
+            user-select: none;
+        }
+
+        .option-check input {
+            width: 16px;
+            height: 16px;
+            margin: 0;
+            cursor: pointer;
+        }
+
+        .option-check.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
         /* 聊天区域 */
         .chat-container {
             flex: 1; padding: 20px;
@@ -169,6 +233,23 @@
             border-bottom-left-radius: 2px;
             border: 1px solid #333;
         }
+
+        .msg-thinking {
+            background-color: #252525;
+            align-self: flex-start;
+            border: 1px solid #444;
+            border-left: 3px solid #666;
+            font-size: 0.85rem;
+            color: #999;
+            max-width: 90%;
+        }
+
+        .msg-thinking summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #aaa;
+            outline: none;
+        }
     </style>
 </head>
 <body>
@@ -177,6 +258,7 @@
         <div class="header-left">
             <div class="status-container">
                 <div class="status-dot"></div>
+                <span id="search-icon" class="search-icon" aria-hidden="true"></span>
                 <div class="status-text" id="status-text">系统启动中...</div>
             </div>
             <button type="button" class="wake-btn" id="wake-btn" aria-label="开始对话" disabled>
@@ -186,12 +268,20 @@
                 对话
             </button>
         </div>
-        
-        <select id="model-selector" class="model-selector">
-            <option value="deepseek-chat">DeepSeek</option>
-            <option value="qwen-plus">Qwen</option>
-            <option value="glm-4">GLM</option>
-        </select>
+
+        <div class="header-right">
+            <label class="option-check" id="thinking-label">
+                <input type="checkbox" id="thinking-check"> 深度思考
+            </label>
+            <label class="option-check" id="search-label">
+                <input type="checkbox" id="search-check"> 联网搜索
+            </label>
+            <select id="model-selector" class="model-selector">
+                <option value="deepseek-chat">DeepSeek</option>
+                <option value="qwen-plus">Qwen</option>
+                <option value="glm-4">GLM</option>
+            </select>
+        </div>
     </div>
 
     <div class="chat-container" id="chat-container"></div>
@@ -201,6 +291,14 @@
         const statusText = document.getElementById('status-text');
         const modelSelector = document.getElementById('model-selector');
         const wakeBtn = document.getElementById('wake-btn');
+        const thinkingCheck = document.getElementById('thinking-check');
+        const searchCheck = document.getElementById('search-check');
+        const thinkingLabel = document.getElementById('thinking-label');
+        const searchLabel = document.getElementById('search-label');
+        const searchIcon = document.getElementById('search-icon');
+
+        let capabilities = {};
+        let searchIconTimer = null;
 
         const wsUrl = `ws://${window.location.host}/ws`;
         const ws = new WebSocket(wsUrl);
@@ -225,6 +323,99 @@
             }
         });
 
+        function sendOptions() {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({
+                type: 'set_options',
+                enable_thinking: thinkingCheck.checked,
+                enable_search: searchCheck.checked,
+            }));
+        }
+
+        function applyCapabilities(caps) {
+            capabilities = caps || {};
+            const thinkingSupported = capabilities.supports_thinking !== false;
+            const searchSupported =
+                capabilities.supports_tool_search || capabilities.supports_native_search;
+
+            thinkingCheck.disabled = !thinkingSupported;
+            searchCheck.disabled = !searchSupported;
+            thinkingLabel.classList.toggle('disabled', !thinkingSupported);
+            searchLabel.classList.toggle('disabled', !searchSupported);
+
+            if (capabilities.thinking_search_exclusive &&
+                thinkingCheck.checked && searchCheck.checked) {
+                thinkingCheck.checked = false;
+                sendOptions();
+            }
+        }
+
+        function applyConfig(data) {
+            if (data.model) modelSelector.value = data.model;
+            if (typeof data.enable_thinking === 'boolean') {
+                thinkingCheck.checked = data.enable_thinking;
+            }
+            if (typeof data.enable_search === 'boolean') {
+                searchCheck.checked = data.enable_search;
+            }
+            if (data.capabilities) applyCapabilities(data.capabilities);
+        }
+
+        function hideSearchIcon() {
+            searchIcon.className = 'search-icon';
+            searchIcon.textContent = '';
+            searchIcon.title = '';
+            searchIcon.setAttribute('aria-hidden', 'true');
+        }
+
+        function showSearchIcon(status) {
+            if (searchIconTimer) {
+                clearTimeout(searchIconTimer);
+                searchIconTimer = null;
+            }
+
+            searchIcon.className = 'search-icon visible';
+            searchIcon.setAttribute('aria-hidden', 'false');
+
+            if (status === 'pending') {
+                searchIcon.classList.add('pending');
+                searchIcon.textContent = '';
+                searchIcon.title = '联网搜索中…';
+                return;
+            }
+
+            searchIcon.classList.remove('pending');
+
+            if (status === 'success') {
+                searchIcon.classList.add('success');
+                searchIcon.textContent = '✓';
+                searchIcon.title = '联网成功';
+            } else if (status === 'failed' || status === 'timeout') {
+                searchIcon.classList.add('failed');
+                searchIcon.textContent = '✗';
+                searchIcon.title = status === 'timeout' ? '联网超时' : '联网失败';
+            } else {
+                hideSearchIcon();
+                return;
+            }
+
+            searchIconTimer = setTimeout(hideSearchIcon, 5000);
+        }
+
+        thinkingCheck.addEventListener('change', function() {
+            if (capabilities.thinking_search_exclusive && thinkingCheck.checked) {
+                searchCheck.checked = false;
+            }
+            sendOptions();
+        });
+
+        searchCheck.addEventListener('change', function() {
+            if (capabilities.thinking_search_exclusive && searchCheck.checked) {
+                thinkingCheck.checked = false;
+            }
+            sendOptions();
+        });
+
         // 监听前端下拉框变化，发送给后端
         modelSelector.addEventListener('change', function() {
             const selectedModel = this.value;
@@ -243,8 +434,15 @@
                 applyStatus(data);
             }
             else if (data.type === 'config_update') {
-                // 初始化时同步后端模型状态
-                modelSelector.value = data.model;
+                applyConfig(data);
+            }
+            else if (data.type === 'search_status') {
+                if (searchCheck.checked || data.status === 'pending') {
+                    showSearchIcon(data.status);
+                }
+            }
+            else if (data.type === 'thinking_msg') {
+                addThinkingMessage(data.text);
             }
             else if (data.type === 'user_msg') {
                 addMessage(data.text, 'msg-user');
@@ -253,6 +451,23 @@
                 addMessage(data.text, 'msg-ai');
             }
         };
+
+        function addThinkingMessage(text) {
+            const details = document.createElement('details');
+            details.className = 'message msg-thinking';
+            details.open = false;
+
+            const summary = document.createElement('summary');
+            summary.textContent = '深度思考过程';
+            details.appendChild(summary);
+
+            const body = document.createElement('div');
+            body.innerText = text;
+            details.appendChild(body);
+
+            chatContainer.appendChild(details);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
 
         function addMessage(text, className) {
             const msgDiv = document.createElement('div');

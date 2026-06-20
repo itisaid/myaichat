@@ -22,6 +22,8 @@ MIN_RECORD_RMS = 400
 
 app_state = {
     "model": DEFAULT_MODEL,
+    "enable_thinking": False,
+    "enable_search": False,
     "status_text": "系统启动中...",
     "phase": "starting",
     "wake_enabled": False,

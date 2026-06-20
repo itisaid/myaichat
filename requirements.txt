@@ -1,0 +1,13 @@
+openai
+duckduckgo-search
+fastapi
+uvicorn
+python-dotenv
+dashscope
+edge-tts
+pygame
+openwakeword
+numpy
+sounddevice
+scipy
+jinja2

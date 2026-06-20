@@ -32,6 +32,18 @@ async def websocket_endpoint(websocket: WebSocket):
             if message.get("type") == "change_model":
                 app_state["model"] = message.get("model")
                 print(f"前端已将模型切换为: {app_state['model']}")
+                await manager.broadcast_config()
+
+            elif message.get("type") == "set_options":
+                if "enable_thinking" in message:
+                    app_state["enable_thinking"] = bool(message["enable_thinking"])
+                if "enable_search" in message:
+                    app_state["enable_search"] = bool(message["enable_search"])
+                await manager.broadcast_config()
+                print(
+                    f"选项更新: 深度思考={app_state['enable_thinking']}, "
+                    f"联网搜索={app_state['enable_search']}"
+                )
 
             elif message.get("type") == "wake":
                 wake_event.set()

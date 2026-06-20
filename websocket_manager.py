@@ -3,11 +3,23 @@ import json
 from fastapi import WebSocket
 
 from config import app_state
+from llm import get_capabilities
 
 
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
+
+    def _config_payload(self) -> str:
+        return json.dumps(
+            {
+                "type": "config_update",
+                "model": app_state["model"],
+                "enable_thinking": app_state["enable_thinking"],
+                "enable_search": app_state["enable_search"],
+                "capabilities": get_capabilities(app_state["model"]),
+            }
+        )
 
     def _status_payload(self) -> str:
         return json.dumps(
@@ -22,9 +34,7 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        await websocket.send_text(
-            json.dumps({"type": "config_update", "model": app_state["model"]})
-        )
+        await websocket.send_text(self._config_payload())
         await websocket.send_text(self._status_payload())
 
     def disconnect(self, websocket: WebSocket):
@@ -36,6 +46,9 @@ class ConnectionManager:
                 await connection.send_text(message)
             except Exception:
                 pass
+
+    async def broadcast_config(self):
+        await self.broadcast(self._config_payload())
 
     async def broadcast_status(self, text: str, phase: str):
         app_state["status_text"] = text
