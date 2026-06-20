@@ -3,6 +3,7 @@ import json
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config import TEXT_DEBUG, app_state, record_hold_event, wake_event
@@ -11,6 +12,7 @@ from text_debug import start_text_debug_reader
 from websocket_manager import manager
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
