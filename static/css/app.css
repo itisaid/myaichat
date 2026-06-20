@@ -32,6 +32,7 @@ body, html {
     gap: 12px;
     min-width: 0;
     flex: 1;
+    overflow: hidden;
 }
 
 .status-container { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -199,7 +200,7 @@ body, html {
     padding: 10px 12px;
     min-height: 44px;
     border-radius: 10px;
-    font-size: 0.95rem;
+    font-size: inherit;
     outline: none;
     cursor: pointer;
     flex-shrink: 0;
@@ -214,24 +215,28 @@ body, html {
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
+    position: relative;
+    z-index: 2;
+    font-size: 1rem;
 }
 
 .option-check {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 0.75rem;
-    color: #aaa;
+    color: #ccc;
     cursor: pointer;
     white-space: nowrap;
     user-select: none;
+    flex-shrink: 0;
 }
 
 .option-check input {
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     margin: 0;
     cursor: pointer;
+    accent-color: var(--accent-color);
 }
 
 .option-check.disabled {
@@ -284,4 +289,15 @@ body, html {
     font-weight: 600;
     color: #aaa;
     outline: none;
+}
+
+@media (max-width: 900px) {
+    .header {
+        flex-wrap: wrap;
+        row-gap: 8px;
+    }
+    .header-right {
+        width: 100%;
+        justify-content: flex-end;
+    }
 }

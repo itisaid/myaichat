@@ -9,12 +9,12 @@ const thinkingLabel = document.getElementById('thinking-label');
 const searchLabel = document.getElementById('search-label');
 const searchIcon = document.getElementById('search-icon');
 
+let ws = null;
 let capabilities = {};
 let searchIconTimer = null;
 let holdActive = false;
 
 const wsUrl = `ws://${window.location.host}/ws`;
-const ws = new WebSocket(wsUrl);
 
 const dotColors = {
     listening: '#4caf50',
@@ -32,10 +32,11 @@ function applyStatus(data) {
     }
     document.querySelector('.status-dot').style.backgroundColor =
         dotColors[data.phase] || '#00bcd4';
+    void document.querySelector('.header').offsetHeight;
 }
 
 function sendRecordHold(active) {
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'record_hold', active: active }));
 }
 
@@ -75,13 +76,13 @@ window.addEventListener('pointerup', function() {
 });
 
 wakeBtn.addEventListener('click', function() {
-    if (ws.readyState === WebSocket.OPEN && !wakeBtn.disabled) {
+    if (ws && ws.readyState === WebSocket.OPEN && !wakeBtn.disabled) {
         ws.send(JSON.stringify({ type: 'wake' }));
     }
 });
 
 function sendOptions() {
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({
         type: 'set_options',
         enable_thinking: thinkingCheck.checked,
@@ -173,41 +174,15 @@ searchCheck.addEventListener('change', function() {
     sendOptions();
 });
 
-// 监听前端下拉框变化，发送给后端
 modelSelector.addEventListener('change', function() {
     const selectedModel = this.value;
-    if(ws.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: "change_model",
             model: selectedModel
         }));
     }
 });
-
-ws.onmessage = function(event) {
-    const data = JSON.parse(event.data);
-
-    if (data.type === 'status') {
-        applyStatus(data);
-    }
-    else if (data.type === 'config_update') {
-        applyConfig(data);
-    }
-    else if (data.type === 'search_status') {
-        if (searchCheck.checked || data.status === 'pending') {
-            showSearchIcon(data.status);
-        }
-    }
-    else if (data.type === 'thinking_msg') {
-        addThinkingMessage(data.text);
-    }
-    else if (data.type === 'user_msg') {
-        addMessage(data.text, 'msg-user');
-    }
-    else if (data.type === 'ai_msg') {
-        addMessage(data.text, 'msg-ai');
-    }
-};
 
 function addThinkingMessage(text) {
     const details = document.createElement('details');
@@ -233,3 +208,34 @@ function addMessage(text, className) {
     chatContainer.appendChild(msgDiv);
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
+
+function initWebSocket() {
+    ws = new WebSocket(wsUrl);
+
+    ws.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'status') {
+            applyStatus(data);
+        }
+        else if (data.type === 'config_update') {
+            applyConfig(data);
+        }
+        else if (data.type === 'search_status') {
+            if (searchCheck.checked || data.status === 'pending') {
+                showSearchIcon(data.status);
+            }
+        }
+        else if (data.type === 'thinking_msg') {
+            addThinkingMessage(data.text);
+        }
+        else if (data.type === 'user_msg') {
+            addMessage(data.text, 'msg-user');
+        }
+        else if (data.type === 'ai_msg') {
+            addMessage(data.text, 'msg-ai');
+        }
+    };
+}
+
+window.addEventListener('load', initWebSocket);
