@@ -1,6 +1,6 @@
 from openai import AsyncOpenAI
 
-from config import DEEPSEEK_KEY
+from config import DEEPSEEK_KEY, MAX_REPLY_TOKENS, MAX_REPLY_TOKENS_THINKING
 from llm.base import LLMProvider
 from llm.tool_loop import run_tool_loop
 from llm.types import ChatOptions, ChatResult, ProviderCapabilities
@@ -35,7 +35,9 @@ class DeepSeekProvider(LLMProvider):
             {"role": "user", "content": user_text},
         ]
         extra_body = self._extra_body(options)
-        max_tokens = 4096 if options.enable_thinking else 1024
+        max_tokens = (
+            MAX_REPLY_TOKENS_THINKING if options.enable_thinking else MAX_REPLY_TOKENS
+        )
 
         try:
             if options.enable_search:

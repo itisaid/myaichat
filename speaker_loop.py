@@ -19,6 +19,7 @@ from config import (
     load_system_prompt,
 )
 from llm import get_provider
+from llm.truncate import truncate_reply
 from llm.types import ChatOptions, ChatResult
 from tts import synthesize
 import text_debug
@@ -103,11 +104,17 @@ async def smart_speaker_loop(manager: ConnectionManager):
                 json.dumps({"type": "thinking_msg", "text": result.reasoning})
             )
 
+        reply_text = truncate_reply(result.content)
+        if len(reply_text) < len(result.content):
+            print(
+                f"⚠️ 回答已截断: {len(result.content)} 字 -> {len(reply_text)} 字"
+            )
+
         await manager.broadcast_status("正在说话...", "speaking")
-        await manager.broadcast(json.dumps({"type": "ai_msg", "text": result.content}))
+        await manager.broadcast(json.dumps({"type": "ai_msg", "text": reply_text}))
 
         try:
-            await synthesize(result.content, str(REPLY_AUDIO_PATH))
+            await synthesize(reply_text, str(REPLY_AUDIO_PATH))
             await play_audio(REPLY_AUDIO_PATH)
         except Exception as e:
             print(f"❌ 语音合成或播放失败: {e}")
