@@ -1,6 +1,26 @@
 import os
+from typing import Any
 
 from dashscope.audio.asr import Recognition
+
+_EMPTY_PLACEHOLDERS = frozenset({"none", "null", "nan"})
+
+
+def _extract_text(sentences: Any) -> str:
+    if not sentences:
+        return ""
+
+    if isinstance(sentences, dict):
+        return str(sentences.get("text", "") or "").strip()
+
+    if isinstance(sentences, list):
+        return "".join(
+            str(s.get("text", "") or "")
+            for s in sentences
+            if isinstance(s, dict)
+        ).strip()
+
+    return ""
 
 
 def transcribe(wav_path: str) -> str:
@@ -24,9 +44,10 @@ def transcribe(wav_path: str) -> str:
         else:
             sentences = response.output.get("sentences", [])
 
-        if isinstance(sentences, list):
-            return "".join(s.get("text", "") for s in sentences).strip()
-        return str(sentences).strip()
+        text = _extract_text(sentences)
+        if text.lower() in _EMPTY_PLACEHOLDERS:
+            return ""
+        return text
     except Exception as e:
         print(f"❌ [错误] 语音识别请求失败: {e}")
         return ""

@@ -10,6 +10,8 @@ import pygame
 import speech_recognition as sr
 from openwakeword.model import Model
 
+from config import MIN_RECORD_RMS
+
 recognizer = sr.Recognizer()
 
 
@@ -90,6 +92,15 @@ def record_audio():
             audio = recognizer.listen(source, timeout=10, phrase_time_limit=10)
         except sr.WaitTimeoutError:
             return None
+
+        pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
+        samples = np.frombuffer(pcm, dtype=np.int16)
+        if samples.size == 0:
+            return None
+        rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+        if rms < MIN_RECORD_RMS:
+            return None
+
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
             tf.write(audio.get_wav_data(convert_rate=16000))
             return tf.name

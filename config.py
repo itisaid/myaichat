@@ -16,6 +16,7 @@ SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "system.txt"
 WAKE_MODEL_PATH = BASE_DIR / "alexa.onnx"
 WAKE_AUDIO_PATH = BASE_DIR / "wozai.mp3"
 REPLY_AUDIO_PATH = BASE_DIR / "reply.mp3"
+MIN_RECORD_RMS = 400
 
 app_state = {"model": DEFAULT_MODEL}
 
