@@ -17,7 +17,12 @@ class GLMProvider(LLMProvider):
         )
 
     async def chat(
-        self, user_text: str, *, system_prompt: str, options: ChatOptions
+        self,
+        user_text: str,
+        *,
+        system_prompt: str,
+        options: ChatOptions,
+        history: list[dict] | None = None,
     ) -> ChatResult:
         # TODO: zhipuai OpenAI 兼容模式
         # extra_body={"enable_thinking": options.enable_thinking}

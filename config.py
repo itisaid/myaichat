@@ -38,6 +38,7 @@ app_state = {
     "phase": "starting",
     "wake_enabled": False,
     "stop_enabled": False,
+    "conversation_history": [],
 }
 wake_event = threading.Event()
 record_hold_event = threading.Event()

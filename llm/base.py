@@ -9,5 +9,10 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def chat(
-        self, user_text: str, *, system_prompt: str, options: ChatOptions
+        self,
+        user_text: str,
+        *,
+        system_prompt: str,
+        options: ChatOptions,
+        history: list[dict] | None = None,
     ) -> ChatResult: ...

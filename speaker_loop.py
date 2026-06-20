@@ -11,6 +11,7 @@ from audio import (
     stop_playback,
     wait_for_wake_word,
 )
+from conversation import append_turn, get_history
 from config import (
     REPLY_AUDIO_PATH,
     TEXT_DEBUG,
@@ -138,7 +139,10 @@ async def smart_speaker_loop(manager: ConnectionManager):
             provider = get_provider(app_state["model"])
             result = await await_cancellable(
                 provider.chat(
-                    user_text, system_prompt=load_system_prompt(), options=options
+                    user_text,
+                    system_prompt=load_system_prompt(),
+                    options=options,
+                    history=get_history(),
                 )
             )
         except ValueError:
@@ -168,6 +172,8 @@ async def smart_speaker_loop(manager: ConnectionManager):
             print(
                 f"⚠️ 回答已截断: {len(result.content)} 字 -> {len(reply_text)} 字"
             )
+
+        append_turn(user_text, result.content)
 
         await manager.broadcast_status("正在说话...", "speaking", stop_enabled=True)
         await manager.broadcast(json.dumps({"type": "ai_msg", "text": reply_text}))

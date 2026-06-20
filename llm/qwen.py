@@ -36,12 +36,17 @@ class QwenProvider(LLMProvider):
         return body
 
     async def chat(
-        self, user_text: str, *, system_prompt: str, options: ChatOptions
+        self,
+        user_text: str,
+        *,
+        system_prompt: str,
+        options: ChatOptions,
+        history: list[dict] | None = None,
     ) -> ChatResult:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text},
-        ]
+        messages = [{"role": "system", "content": system_prompt}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": user_text})
         extra_body = self._extra_body(options)
         max_tokens = (
             MAX_REPLY_TOKENS_THINKING if options.enable_thinking else MAX_REPLY_TOKENS
