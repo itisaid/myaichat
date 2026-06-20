@@ -10,9 +10,83 @@ import pygame
 import speech_recognition as sr
 from openwakeword.model import Model
 
-from config import MIN_RECORD_RMS, TEXT_DEBUG, wake_event
+from config import (
+    MAX_HOLD_RECORD_SECONDS,
+    MIN_RECORD_RMS,
+    PHRASE_TIME_LIMIT,
+    RECORD_START_TIMEOUT,
+    TEXT_DEBUG,
+    record_hold_event,
+    wake_event,
+)
 
 recognizer = sr.Recognizer()
+
+
+def _chunk_energy(buffer: bytes) -> float:
+    if not buffer:
+        return 0.0
+    samples = np.frombuffer(buffer, dtype=np.int16)
+    return float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+
+
+def record_audio():
+    record_hold_event.clear()
+
+    with sr.Microphone() as source:
+        chunk = source.CHUNK
+        sample_width = source.SAMPLE_WIDTH
+        sample_rate = source.SAMPLE_RATE
+
+        frames: list[bytes] = []
+        wait_deadline = time.time() + RECORD_START_TIMEOUT
+        while time.time() < wait_deadline:
+            buffer = source.stream.read(chunk)
+            if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                frames.append(buffer)
+                break
+        else:
+            return None
+
+        last_speech_time = time.time()
+        record_start = time.time()
+        hold_was_active = False
+
+        while True:
+            hold_active = record_hold_event.is_set()
+            if hold_was_active and not hold_active:
+                break
+            hold_was_active = hold_active
+
+            now = time.time()
+            elapsed = now - record_start
+
+            if elapsed >= MAX_HOLD_RECORD_SECONDS:
+                break
+
+            if not hold_active:
+                if elapsed >= PHRASE_TIME_LIMIT:
+                    break
+                if now - last_speech_time >= recognizer.pause_threshold:
+                    break
+
+            buffer = source.stream.read(chunk)
+            frames.append(buffer)
+            if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                last_speech_time = time.time()
+
+        audio = sr.AudioData(b"".join(frames), sample_rate, sample_width)
+        pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
+        samples = np.frombuffer(pcm, dtype=np.int16)
+        if samples.size == 0:
+            return None
+        rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+        if rms < MIN_RECORD_RMS:
+            return None
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            tf.write(audio.get_wav_data(convert_rate=16000))
+            return tf.name
 
 
 def calibrate_noise():
@@ -98,26 +172,6 @@ def wait_for_wake_word(model_path: str | os.PathLike):
         mic_stream.stop_stream()
         mic_stream.close()
         pa.terminate()
-
-
-def record_audio():
-    with sr.Microphone() as source:
-        try:
-            audio = recognizer.listen(source, timeout=10, phrase_time_limit=10)
-        except sr.WaitTimeoutError:
-            return None
-
-        pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
-        samples = np.frombuffer(pcm, dtype=np.int16)
-        if samples.size == 0:
-            return None
-        rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
-        if rms < MIN_RECORD_RMS:
-            return None
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
-            tf.write(audio.get_wav_data(convert_rate=16000))
-            return tf.name
 
 
 async def play_audio(path: str | os.PathLike):

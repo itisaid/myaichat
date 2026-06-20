@@ -151,6 +151,48 @@
             animation: btnPulse 1.2s ease-in-out infinite;
         }
 
+        .hold-btn {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            min-width: 88px;
+            min-height: 48px;
+            padding: 10px 18px;
+            border: none;
+            border-radius: 24px;
+            background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+            color: #fff;
+            font-size: 1.05rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            box-shadow: 0 4px 14px rgba(255, 152, 0, 0.35),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+            transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+            flex-shrink: 0;
+            user-select: none;
+        }
+
+        .hold-btn.visible {
+            display: inline-flex;
+        }
+
+        .hold-btn:active:not(:disabled),
+        .hold-btn.holding {
+            transform: scale(0.96);
+            background: linear-gradient(135deg, #ffb74d 0%, #ff9800 100%);
+            box-shadow: 0 4px 22px rgba(255, 152, 0, 0.55),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+            animation: holdPulse 0.8s ease-in-out infinite;
+        }
+
+        @keyframes holdPulse {
+            0%, 100% { box-shadow: 0 4px 14px rgba(255, 152, 0, 0.35); }
+            50% { box-shadow: 0 4px 24px rgba(255, 152, 0, 0.65); }
+        }
+
         @keyframes btnPulse {
             0%, 100% { box-shadow: 0 4px 14px rgba(76, 175, 80, 0.35); }
             50% { box-shadow: 0 4px 22px rgba(76, 175, 80, 0.55); }
@@ -267,6 +309,9 @@
                 </svg>
                 对话
             </button>
+            <button type="button" class="hold-btn" id="hold-btn" aria-label="按住续录">
+                续录
+            </button>
         </div>
 
         <div class="header-right">
@@ -291,6 +336,7 @@
         const statusText = document.getElementById('status-text');
         const modelSelector = document.getElementById('model-selector');
         const wakeBtn = document.getElementById('wake-btn');
+        const holdBtn = document.getElementById('hold-btn');
         const thinkingCheck = document.getElementById('thinking-check');
         const searchCheck = document.getElementById('search-check');
         const thinkingLabel = document.getElementById('thinking-label');
@@ -299,6 +345,7 @@
 
         let capabilities = {};
         let searchIconTimer = null;
+        let holdActive = false;
 
         const wsUrl = `ws://${window.location.host}/ws`;
         const ws = new WebSocket(wsUrl);
@@ -313,9 +360,53 @@
             statusText.innerText = data.text;
             wakeBtn.disabled = !data.wake_enabled;
             wakeBtn.classList.toggle('listening', data.phase === 'listening');
+            holdBtn.classList.toggle('visible', !!data.record_hold_enabled);
+            if (!data.record_hold_enabled && holdActive) {
+                endHoldRecord();
+            }
             document.querySelector('.status-dot').style.backgroundColor =
                 dotColors[data.phase] || '#00bcd4';
         }
+
+        function sendRecordHold(active) {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({ type: 'record_hold', active: active }));
+        }
+
+        function endHoldRecord() {
+            if (!holdActive) return;
+            holdActive = false;
+            holdBtn.classList.remove('holding');
+            sendRecordHold(false);
+        }
+
+        function startHoldRecord(event) {
+            if (!holdBtn.classList.contains('visible')) return;
+            event.preventDefault();
+            if (holdActive) return;
+            holdActive = true;
+            holdBtn.classList.add('holding');
+            if (holdBtn.setPointerCapture && event.pointerId !== undefined) {
+                holdBtn.setPointerCapture(event.pointerId);
+            }
+            sendRecordHold(true);
+        }
+
+        holdBtn.addEventListener('pointerdown', startHoldRecord);
+
+        holdBtn.addEventListener('pointerup', function(event) {
+            event.preventDefault();
+            endHoldRecord();
+        });
+
+        holdBtn.addEventListener('pointercancel', function(event) {
+            event.preventDefault();
+            endHoldRecord();
+        });
+
+        window.addEventListener('pointerup', function() {
+            endHoldRecord();
+        });
 
         wakeBtn.addEventListener('click', function() {
             if (ws.readyState === WebSocket.OPEN && !wakeBtn.disabled) {

@@ -19,6 +19,9 @@ WAKE_MODEL_PATH = BASE_DIR / "alexa.onnx"
 WAKE_AUDIO_PATH = BASE_DIR / "wozai.mp3"
 REPLY_AUDIO_PATH = BASE_DIR / "reply.mp3"
 MIN_RECORD_RMS = 400
+PHRASE_TIME_LIMIT = 10
+RECORD_START_TIMEOUT = 10
+MAX_HOLD_RECORD_SECONDS = 60
 MAX_REPLY_CHARS = 800
 MAX_REPLY_TOKENS = 600
 MAX_REPLY_TOKENS_THINKING = 2048
@@ -32,6 +35,7 @@ app_state = {
     "wake_enabled": False,
 }
 wake_event = threading.Event()
+record_hold_event = threading.Event()
 
 dashscope.api_key = ALI_KEY
 if not TEXT_DEBUG:

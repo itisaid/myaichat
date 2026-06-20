@@ -2,7 +2,7 @@ import json
 
 from fastapi import WebSocket
 
-from config import app_state
+from config import TEXT_DEBUG, app_state
 from llm import get_capabilities
 
 
@@ -22,12 +22,14 @@ class ConnectionManager:
         )
 
     def _status_payload(self) -> str:
+        phase = app_state["phase"]
         return json.dumps(
             {
                 "type": "status",
                 "text": app_state["status_text"],
-                "phase": app_state["phase"],
+                "phase": phase,
                 "wake_enabled": app_state["wake_enabled"],
+                "record_hold_enabled": phase == "listening" and not TEXT_DEBUG,
             }
         )
 

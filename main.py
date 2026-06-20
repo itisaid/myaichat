@@ -5,7 +5,7 @@ import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
 
-from config import TEXT_DEBUG, app_state, wake_event
+from config import TEXT_DEBUG, app_state, record_hold_event, wake_event
 from speaker_loop import smart_speaker_loop
 from text_debug import start_text_debug_reader
 from websocket_manager import manager
@@ -48,6 +48,14 @@ async def websocket_endpoint(websocket: WebSocket):
             elif message.get("type") == "wake":
                 wake_event.set()
                 print("前端按钮触发唤醒")
+
+            elif message.get("type") == "record_hold":
+                if app_state["phase"] != "listening":
+                    continue
+                if message.get("active"):
+                    record_hold_event.set()
+                else:
+                    record_hold_event.clear()
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
