@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 
 import dashscope
@@ -18,7 +19,13 @@ WAKE_AUDIO_PATH = BASE_DIR / "wozai.mp3"
 REPLY_AUDIO_PATH = BASE_DIR / "reply.mp3"
 MIN_RECORD_RMS = 400
 
-app_state = {"model": DEFAULT_MODEL}
+app_state = {
+    "model": DEFAULT_MODEL,
+    "status_text": "系统启动中...",
+    "phase": "starting",
+    "wake_enabled": False,
+}
+wake_event = threading.Event()
 
 dashscope.api_key = ALI_KEY
 pygame.mixer.init()

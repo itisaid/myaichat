@@ -10,7 +10,7 @@ import pygame
 import speech_recognition as sr
 from openwakeword.model import Model
 
-from config import MIN_RECORD_RMS
+from config import MIN_RECORD_RMS, wake_event
 
 recognizer = sr.Recognizer()
 
@@ -64,9 +64,14 @@ def wait_for_wake_word(model_path: str | os.PathLike):
             return False
 
     print("\n💤 [休眠中] 等待唤醒词...")
+    wake_event.clear()
 
     try:
         while True:
+            if wake_event.is_set():
+                print("\n🔔 [唤醒] 界面按钮触发对话")
+                return True
+
             if downsample_factor == 1:
                 pcm = mic_stream.read(1280, exception_on_overflow=False)
                 audio_data = np.frombuffer(pcm, dtype=np.int16)

@@ -29,17 +29,17 @@ async def smart_speaker_loop(manager: ConnectionManager):
     calibrate_noise()
 
     while True:
-        await manager.broadcast_status("💤 休眠中 (喊 alexa 唤醒)")
+        await manager.broadcast_status("💤 休眠中 (喊 alexa 或点「对话」)", "sleeping")
         await asyncio.to_thread(wait_for_wake_word, WAKE_MODEL_PATH)
 
-        await manager.broadcast_status("✨ 我在！请说话...")
+        await manager.broadcast_status("✨ 我在！请说话...", "listening")
         await play_audio(WAKE_AUDIO_PATH)
 
         wav_file = await asyncio.to_thread(record_audio)
         if wav_file is None:
             continue
 
-        await manager.broadcast_status("语音识别中...")
+        await manager.broadcast_status("语音识别中...", "transcribing")
 
         try:
             user_text = await asyncio.to_thread(transcribe, wav_file)
@@ -58,7 +58,7 @@ async def smart_speaker_loop(manager: ConnectionManager):
         except ValueError:
             ai_reply = "我不知道我在用什么模型..."
 
-        await manager.broadcast_status("正在说话...")
+        await manager.broadcast_status("正在说话...", "speaking")
         await manager.broadcast(json.dumps({"type": "ai_msg", "text": ai_reply}))
 
         try:

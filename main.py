@@ -5,7 +5,7 @@ import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
 
-from config import app_state
+from config import app_state, wake_event
 from speaker_loop import smart_speaker_loop
 from websocket_manager import manager
 
@@ -31,6 +31,10 @@ async def websocket_endpoint(websocket: WebSocket):
             if message.get("type") == "change_model":
                 app_state["model"] = message.get("model")
                 print(f"前端已将模型切换为: {app_state['model']}")
+
+            elif message.get("type") == "wake":
+                wake_event.set()
+                print("前端按钮触发唤醒")
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
