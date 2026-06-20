@@ -30,6 +30,7 @@ class ConnectionManager:
                 "phase": phase,
                 "wake_enabled": app_state["wake_enabled"],
                 "record_hold_enabled": phase == "listening" and not TEXT_DEBUG,
+                "stop_enabled": app_state["stop_enabled"],
             }
         )
 
@@ -52,10 +53,16 @@ class ConnectionManager:
     async def broadcast_config(self):
         await self.broadcast(self._config_payload())
 
-    async def broadcast_status(self, text: str, phase: str):
+    async def broadcast_status(
+        self, text: str, phase: str, *, stop_enabled: bool | None = None
+    ):
         app_state["status_text"] = text
         app_state["phase"] = phase
         app_state["wake_enabled"] = phase == "sleeping"
+        if stop_enabled is not None:
+            app_state["stop_enabled"] = stop_enabled
+        elif phase not in ("transcribing", "speaking"):
+            app_state["stop_enabled"] = False
         await self.broadcast(self._status_payload())
 
 

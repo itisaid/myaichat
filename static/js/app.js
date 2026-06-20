@@ -3,6 +3,7 @@ const statusText = document.getElementById('status-text');
 const modelSelector = document.getElementById('model-selector');
 const wakeBtn = document.getElementById('wake-btn');
 const holdBtn = document.getElementById('hold-btn');
+const stopBtn = document.getElementById('stop-btn');
 const thinkingCheck = document.getElementById('thinking-check');
 const searchCheck = document.getElementById('search-check');
 const thinkingLabel = document.getElementById('thinking-label');
@@ -27,8 +28,12 @@ function applyStatus(data) {
     wakeBtn.disabled = !data.wake_enabled;
     wakeBtn.classList.toggle('listening', data.phase === 'listening');
     holdBtn.classList.toggle('visible', !!data.record_hold_enabled);
+    stopBtn.classList.toggle('visible', !!data.stop_enabled);
     if (!data.record_hold_enabled && holdActive) {
         endHoldRecord();
+    }
+    if (data.phase === 'sleeping') {
+        hideSearchIcon();
     }
     document.querySelector('.status-dot').style.backgroundColor =
         dotColors[data.phase] || '#00bcd4';
@@ -78,6 +83,12 @@ window.addEventListener('pointerup', function() {
 wakeBtn.addEventListener('click', function() {
     if (ws && ws.readyState === WebSocket.OPEN && !wakeBtn.disabled) {
         ws.send(JSON.stringify({ type: 'wake' }));
+    }
+});
+
+stopBtn.addEventListener('click', function() {
+    if (ws && ws.readyState === WebSocket.OPEN && stopBtn.classList.contains('visible')) {
+        ws.send(JSON.stringify({ type: 'stop' }));
     }
 });
 

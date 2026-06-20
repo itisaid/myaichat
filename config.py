@@ -37,9 +37,11 @@ app_state = {
     "status_text": "系统启动中...",
     "phase": "starting",
     "wake_enabled": False,
+    "stop_enabled": False,
 }
 wake_event = threading.Event()
 record_hold_event = threading.Event()
+cancel_event = threading.Event()
 
 dashscope.api_key = ALI_KEY
 if not TEXT_DEBUG:

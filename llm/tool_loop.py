@@ -1,8 +1,10 @@
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 
 from openai import AsyncOpenAI
 
+from config import cancel_event
 from llm.types import ChatResult
 from search.duckduckgo import SEARCH_FALLBACK, web_search
 
@@ -54,6 +56,9 @@ async def run_tool_loop(
     reasoning_parts: list[str] = []
 
     for _ in range(max_rounds):
+        if cancel_event.is_set():
+            raise asyncio.CancelledError()
+
         kwargs: dict = {
             "model": model,
             "messages": messages,

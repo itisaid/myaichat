@@ -16,6 +16,7 @@ from config import (
     PHRASE_TIME_LIMIT,
     RECORD_START_TIMEOUT,
     TEXT_DEBUG,
+    cancel_event,
     record_hold_event,
     wake_event,
 )
@@ -182,7 +183,17 @@ async def play_audio(path: str | os.PathLike):
     pygame.mixer.music.load(os.fspath(path))
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():
+        if cancel_event.is_set():
+            pygame.mixer.music.stop()
+            return
         await asyncio.sleep(0.1)
+
+
+def stop_playback():
+    if TEXT_DEBUG:
+        return
+    if pygame.mixer.get_init():
+        pygame.mixer.music.stop()
 
 
 async def ensure_wake_audio(path: str | os.PathLike):

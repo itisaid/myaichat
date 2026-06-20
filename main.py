@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from config import TEXT_DEBUG, app_state, record_hold_event, wake_event
+from config import TEXT_DEBUG, app_state, cancel_event, record_hold_event, wake_event
 from speaker_loop import smart_speaker_loop
 from text_debug import start_text_debug_reader
 from websocket_manager import manager
@@ -58,6 +58,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     record_hold_event.set()
                 else:
                     record_hold_event.clear()
+
+            elif message.get("type") == "stop":
+                if app_state.get("stop_enabled"):
+                    cancel_event.set()
+                    print("前端按钮触发终止")
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
