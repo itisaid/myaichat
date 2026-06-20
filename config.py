@@ -10,7 +10,11 @@ load_dotenv()
 
 ALI_KEY = os.getenv("ALI_KEY")
 DEEPSEEK_KEY = os.getenv("DEEPSEEK_KEY")
-DEFAULT_MODEL = "deepseek-chat"
+DASHSCOPE_BASE_URL = os.getenv(
+    "DASHSCOPE_BASE_URL",
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
+DEFAULT_MODEL = "qwen-plus"
 TEXT_DEBUG = os.getenv("TEXT_DEBUG", "").lower() in ("1", "true", "yes")
 
 BASE_DIR = Path(__file__).resolve().parent
