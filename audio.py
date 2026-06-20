@@ -75,7 +75,7 @@ def wait_for_wake_word(model_path: str | os.PathLike):
             prediction = oww_model.predict(audio_data)
 
             for _mdl_name, score in prediction.items():
-                if score > 0.4:
+                if score > 0.2:
                     print(f"\n🔔 [唤醒] 检测到唤醒词！(置信度: {score:.2f})")
                     return True
     finally:

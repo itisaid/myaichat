@@ -13,7 +13,7 @@ DEFAULT_MODEL = "deepseek-chat"
 
 BASE_DIR = Path(__file__).resolve().parent
 SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "system.txt"
-WAKE_MODEL_PATH = BASE_DIR / "hey_jarvis.onnx"
+WAKE_MODEL_PATH = BASE_DIR / "alexa.onnx"
 WAKE_AUDIO_PATH = BASE_DIR / "wozai.mp3"
 REPLY_AUDIO_PATH = BASE_DIR / "reply.mp3"
 

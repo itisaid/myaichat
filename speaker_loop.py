@@ -29,7 +29,7 @@ async def smart_speaker_loop(manager: ConnectionManager):
     calibrate_noise()
 
     while True:
-        await manager.broadcast_status("💤 休眠中 (喊Hey Jarvis 唤醒)")
+        await manager.broadcast_status("💤 休眠中 (喊 alexa 唤醒)")
         await asyncio.to_thread(wait_for_wake_word, WAKE_MODEL_PATH)
 
         await manager.broadcast_status("✨ 我在！请说话...")
