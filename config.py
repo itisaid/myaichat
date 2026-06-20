@@ -11,6 +11,7 @@ load_dotenv()
 ALI_KEY = os.getenv("ALI_KEY")
 DEEPSEEK_KEY = os.getenv("DEEPSEEK_KEY")
 DEFAULT_MODEL = "deepseek-chat"
+TEXT_DEBUG = os.getenv("TEXT_DEBUG", "").lower() in ("1", "true", "yes")
 
 BASE_DIR = Path(__file__).resolve().parent
 SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "system.txt"
@@ -28,7 +29,8 @@ app_state = {
 wake_event = threading.Event()
 
 dashscope.api_key = ALI_KEY
-pygame.mixer.init()
+if not TEXT_DEBUG:
+    pygame.mixer.init()
 
 
 def load_system_prompt() -> str:

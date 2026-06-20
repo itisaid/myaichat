@@ -10,7 +10,7 @@ import pygame
 import speech_recognition as sr
 from openwakeword.model import Model
 
-from config import MIN_RECORD_RMS, wake_event
+from config import MIN_RECORD_RMS, TEXT_DEBUG, wake_event
 
 recognizer = sr.Recognizer()
 
@@ -26,6 +26,15 @@ def calibrate_noise():
 
 
 def wait_for_wake_word(model_path: str | os.PathLike):
+    if TEXT_DEBUG:
+        print("\n💤 [TEXT_DEBUG] 等待唤醒 (/wake、Enter 或界面「对话」)...")
+        wake_event.clear()
+        while True:
+            if wake_event.is_set():
+                print("\n🔔 [唤醒] 终端或界面触发对话")
+                return True
+            time.sleep(0.1)
+
     print("\n[系统状态] 正在加载唤醒模型，请稍候...")
     model_path = os.fspath(model_path)
 
@@ -112,6 +121,10 @@ def record_audio():
 
 
 async def play_audio(path: str | os.PathLike):
+    if TEXT_DEBUG:
+        print(f"[播放] {path}")
+        return
+
     pygame.mixer.music.load(os.fspath(path))
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():

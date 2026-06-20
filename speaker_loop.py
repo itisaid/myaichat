@@ -12,6 +12,7 @@ from audio import (
 )
 from config import (
     REPLY_AUDIO_PATH,
+    TEXT_DEBUG,
     WAKE_AUDIO_PATH,
     WAKE_MODEL_PATH,
     app_state,
@@ -19,6 +20,7 @@ from config import (
 )
 from llm import get_provider
 from tts import synthesize
+import text_debug
 from websocket_manager import ConnectionManager
 
 
@@ -26,29 +28,42 @@ async def smart_speaker_loop(manager: ConnectionManager):
     await asyncio.sleep(2)
 
     await ensure_wake_audio(WAKE_AUDIO_PATH)
-    calibrate_noise()
+    if TEXT_DEBUG:
+        print("[TEXT_DEBUG] 跳过麦克风校准")
+    else:
+        calibrate_noise()
 
     while True:
-        await manager.broadcast_status("💤 休眠中 (喊 alexa 或点「对话」)", "sleeping")
+        if TEXT_DEBUG:
+            status = "💤 休眠中 (终端 /wake 或点「对话」)"
+        else:
+            status = "💤 休眠中 (喊 alexa 或点「对话」)"
+        await manager.broadcast_status(status, "sleeping")
         await asyncio.to_thread(wait_for_wake_word, WAKE_MODEL_PATH)
 
         await manager.broadcast_status("✨ 我在！请说话...", "listening")
         await play_audio(WAKE_AUDIO_PATH)
 
-        wav_file = await asyncio.to_thread(record_audio)
-        if wav_file is None:
-            continue
+        if TEXT_DEBUG:
+            user_text = await text_debug.user_text_queue.get()
+        else:
+            wav_file = await asyncio.to_thread(record_audio)
+            if wav_file is None:
+                continue
 
-        await manager.broadcast_status("语音识别中...", "transcribing")
+            await manager.broadcast_status("语音识别中...", "transcribing")
 
-        try:
-            user_text = await asyncio.to_thread(transcribe, wav_file)
-        finally:
-            if wav_file and os.path.exists(wav_file):
-                os.remove(wav_file)
+            try:
+                user_text = await asyncio.to_thread(transcribe, wav_file)
+            finally:
+                if wav_file and os.path.exists(wav_file):
+                    os.remove(wav_file)
 
         if not user_text:
             continue
+
+        if TEXT_DEBUG:
+            await manager.broadcast_status("语音识别中...", "transcribing")
 
         await manager.broadcast(json.dumps({"type": "user_msg", "text": user_text}))
 

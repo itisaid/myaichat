@@ -5,8 +5,9 @@ import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
 
-from config import app_state, wake_event
+from config import TEXT_DEBUG, app_state, wake_event
 from speaker_loop import smart_speaker_loop
+from text_debug import start_text_debug_reader
 from websocket_manager import manager
 
 app = FastAPI()
@@ -42,8 +43,17 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.on_event("startup")
 async def startup_event():
+    if TEXT_DEBUG:
+        start_text_debug_reader(asyncio.get_running_loop())
+        print("TEXT_DEBUG 模式：终端 /wake + 文本输入，浏览器仅观察")
     asyncio.create_task(smart_speaker_loop(manager))
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_level="warning" if TEXT_DEBUG else "info",
+        access_log=not TEXT_DEBUG,
+    )
