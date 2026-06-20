@@ -40,6 +40,13 @@ async def abort_to_sleeping(manager: ConnectionManager):
     await manager.broadcast_status(_sleeping_status(), "sleeping", stop_enabled=False)
 
 
+class _Cancelled:
+    """Sentinel: await_cancellable was interrupted by cancel_event."""
+
+
+CANCELLED = _Cancelled()
+
+
 async def await_cancellable(awaitable):
     task = (
         awaitable
@@ -53,12 +60,12 @@ async def await_cancellable(awaitable):
                 await task
             except asyncio.CancelledError:
                 pass
-            return None
+            return CANCELLED
         await asyncio.sleep(0.05)
     try:
         return await task
     except asyncio.CancelledError:
-        return None
+        return CANCELLED
 
 
 async def smart_speaker_loop(manager: ConnectionManager):
@@ -101,7 +108,7 @@ async def smart_speaker_loop(manager: ConnectionManager):
                 if wav_file and os.path.exists(wav_file):
                     os.remove(wav_file)
 
-            if user_text is None:
+            if user_text is CANCELLED:
                 await abort_to_sleeping(manager)
                 continue
 
@@ -137,7 +144,7 @@ async def smart_speaker_loop(manager: ConnectionManager):
         except ValueError:
             result = ChatResult(content="我不知道我在用什么模型...")
 
-        if result is None:
+        if result is CANCELLED:
             await abort_to_sleeping(manager)
             continue
 
@@ -166,10 +173,12 @@ async def smart_speaker_loop(manager: ConnectionManager):
         await manager.broadcast(json.dumps({"type": "ai_msg", "text": reply_text}))
 
         try:
-            synth_result = await await_cancellable(
-                synthesize(reply_text, str(REPLY_AUDIO_PATH))
-            )
-            if synth_result is None:
+            if (
+                await await_cancellable(
+                    synthesize(reply_text, str(REPLY_AUDIO_PATH))
+                )
+                is CANCELLED
+            ):
                 await abort_to_sleeping(manager)
                 continue
 
