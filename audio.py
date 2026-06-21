@@ -16,6 +16,7 @@ from config import (
     PHRASE_TIME_LIMIT,
     RECORD_START_TIMEOUT,
     TEXT_DEBUG,
+    WAKE_WORD_THRESHOLD,
     cancel_event,
     record_hold_event,
     wake_event,
@@ -166,7 +167,7 @@ def wait_for_wake_word(model_path: str | os.PathLike):
             prediction = oww_model.predict(audio_data)
 
             for _mdl_name, score in prediction.items():
-                if score > 0.2:
+                if score > WAKE_WORD_THRESHOLD:
                     print(f"\n🔔 [唤醒] 检测到唤醒词！(置信度: {score:.2f})")
                     return True
     finally:
