@@ -3,6 +3,10 @@ from typing import Any
 
 from dashscope.audio.asr import Recognition
 
+from log_config import get_logger
+
+logger = get_logger("asr")
+
 _EMPTY_PLACEHOLDERS = frozenset({"none", "null", "nan"})
 
 
@@ -36,7 +40,7 @@ def transcribe(wav_path: str) -> str:
         response = asr_instance.call(os.path.abspath(wav_path))
 
         if response.status_code != 200:
-            print(f"❌ [错误] 阿里接口返回异常 -> 状态码: {response.status_code}")
+            logger.error("阿里 ASR 异常 status=%s", response.status_code)
             return ""
 
         if hasattr(response, "get_sentence"):
@@ -49,5 +53,5 @@ def transcribe(wav_path: str) -> str:
             return ""
         return text
     except Exception as e:
-        print(f"❌ [错误] 语音识别请求失败: {e}")
+        logger.error("语音识别请求失败: %s", e)
         return ""

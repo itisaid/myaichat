@@ -22,8 +22,16 @@ from config import (
     record_hold_event,
     wake_event,
 )
+from log_config import get_logger, suppress_native_stderr
 
+logger = get_logger("audio")
 recognizer = sr.Recognizer()
+
+_wake_model: Model | None = None
+_pa: pyaudio.PyAudio | None = None
+_mic_stream = None
+_downsample_factor = 1
+_wake_audio_ready = False
 
 
 def _chunk_energy(buffer: bytes) -> float:
@@ -35,154 +43,176 @@ def _chunk_energy(buffer: bytes) -> float:
 
 def record_audio():
     record_hold_event.clear()
+    logger.info("开始录音")
 
-    with sr.Microphone() as source:
-        chunk = source.CHUNK
-        sample_width = source.SAMPLE_WIDTH
-        sample_rate = source.SAMPLE_RATE
+    with suppress_native_stderr():
+        with sr.Microphone() as source:
+            chunk = source.CHUNK
+            sample_width = source.SAMPLE_WIDTH
+            sample_rate = source.SAMPLE_RATE
 
-        frames: list[bytes] = []
-        wait_deadline = time.time() + RECORD_START_TIMEOUT
-        while time.time() < wait_deadline:
-            buffer = source.stream.read(chunk)
-            if _chunk_energy(buffer) >= recognizer.energy_threshold:
+            frames: list[bytes] = []
+            wait_deadline = time.time() + RECORD_START_TIMEOUT
+            while time.time() < wait_deadline:
+                buffer = source.stream.read(chunk)
+                if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                    frames.append(buffer)
+                    break
+            else:
+                logger.warning("录音超时或音量过低，跳过本轮")
+                return None
+
+            last_speech_time = time.time()
+            record_start = time.time()
+            hold_was_active = False
+
+            while True:
+                hold_active = record_hold_event.is_set()
+                if hold_was_active and not hold_active:
+                    break
+                hold_was_active = hold_active
+
+                now = time.time()
+                elapsed = now - record_start
+
+                if elapsed >= MAX_HOLD_RECORD_SECONDS:
+                    break
+
+                if not hold_active:
+                    if elapsed >= PHRASE_TIME_LIMIT:
+                        break
+                    if now - last_speech_time >= recognizer.pause_threshold:
+                        break
+
+                buffer = source.stream.read(chunk)
                 frames.append(buffer)
-                break
-        else:
-            return None
+                if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                    last_speech_time = time.time()
 
-        last_speech_time = time.time()
-        record_start = time.time()
-        hold_was_active = False
+            audio = sr.AudioData(b"".join(frames), sample_rate, sample_width)
+            pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
+            samples = np.frombuffer(pcm, dtype=np.int16)
+            if samples.size == 0:
+                logger.warning("录音为空，跳过本轮")
+                return None
+            rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+            if rms < MIN_RECORD_RMS:
+                logger.warning("录音音量过低 (rms=%.0f)，跳过本轮", rms)
+                return None
 
-        while True:
-            hold_active = record_hold_event.is_set()
-            if hold_was_active and not hold_active:
-                break
-            hold_was_active = hold_active
-
-            now = time.time()
-            elapsed = now - record_start
-
-            if elapsed >= MAX_HOLD_RECORD_SECONDS:
-                break
-
-            if not hold_active:
-                if elapsed >= PHRASE_TIME_LIMIT:
-                    break
-                if now - last_speech_time >= recognizer.pause_threshold:
-                    break
-
-            buffer = source.stream.read(chunk)
-            frames.append(buffer)
-            if _chunk_energy(buffer) >= recognizer.energy_threshold:
-                last_speech_time = time.time()
-
-        audio = sr.AudioData(b"".join(frames), sample_rate, sample_width)
-        pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
-        samples = np.frombuffer(pcm, dtype=np.int16)
-        if samples.size == 0:
-            return None
-        rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
-        if rms < MIN_RECORD_RMS:
-            return None
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
-            tf.write(audio.get_wav_data(convert_rate=16000))
-            return tf.name
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                tf.write(audio.get_wav_data(convert_rate=16000))
+                return tf.name
 
 
 def calibrate_noise():
-    print("\n[系统提示] 🎤 正在校准环境基准噪音，请保持安静 1 秒钟...")
+    logger.info("正在校准环境噪音，请保持安静 1 秒...")
     try:
-        with sr.Microphone() as global_source:
-            recognizer.adjust_for_ambient_noise(global_source, duration=1)
-        print("[系统提示] ✅ 噪声校准完成！设备已准备就绪。")
+        with suppress_native_stderr():
+            with sr.Microphone() as global_source:
+                recognizer.adjust_for_ambient_noise(global_source, duration=1)
+        logger.info("噪声校准完成")
     except Exception as e:
-        print(f"[错误] 麦克风初始化失败: {e}")
+        logger.error("麦克风初始化失败: %s", e)
 
 
-def wait_for_wake_word(model_path: str | os.PathLike):
-    if TEXT_DEBUG:
-        print("\n💤 [TEXT_DEBUG] 等待唤醒 (/wake、Enter 或界面「对话」)...")
-        wake_event.clear()
-        while True:
-            if wake_event.is_set():
-                print("\n🔔 [唤醒] 终端或界面触发对话")
-                wake_display()
-                return True
-            time.sleep(0.1)
-
-    print("\n[系统状态] 正在加载唤醒模型，请稍候...")
-    model_path = os.fspath(model_path)
-
+def _open_mic_stream(pa: pyaudio.PyAudio):
+    global _downsample_factor
     try:
-        oww_model = Model(wakeword_models=[model_path], inference_framework="onnx")
-    except TypeError:
-        oww_model = Model(wakeword_model_paths=[model_path])
-
-    print("[系统状态] 模型加载完成，准备接管麦克风...")
-    time.sleep(1)
-
-    pa = pyaudio.PyAudio()
-
-    try:
-        mic_stream = pa.open(
+        stream = pa.open(
             format=pyaudio.paInt16,
             channels=1,
             rate=16000,
             input=True,
             frames_per_buffer=1280,
         )
-        downsample_factor = 1
+        _downsample_factor = 1
+        return stream
     except Exception:
-        print("⚠️ 麦克风不支持 16000Hz，自动开启 48000Hz 兼容模式...")
+        logger.warning("16000Hz 不可用，使用 48000Hz 兼容模式")
         try:
-            mic_stream = pa.open(
+            stream = pa.open(
                 format=pyaudio.paInt16,
                 channels=1,
                 rate=48000,
                 input=True,
                 frames_per_buffer=1280 * 3,
             )
-            downsample_factor = 3
+            _downsample_factor = 3
+            return stream
         except Exception:
-            print("❌ [错误] 麦克风被占用或彻底无法打开，请检查硬件！")
-            return False
+            logger.error("麦克风被占用或无法打开，请检查硬件")
+            return None
 
-    print("\n💤 [休眠中] 等待唤醒词...")
-    wake_event.clear()
 
-    try:
+def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
+    global _wake_model, _pa, _mic_stream, _wake_audio_ready
+
+    if _wake_audio_ready and _mic_stream is not None:
+        return True
+
+    model_path = os.fspath(model_path)
+    logger.info("正在加载唤醒模型...")
+
+    with suppress_native_stderr():
+        try:
+            _wake_model = Model(wakeword_models=[model_path], inference_framework="onnx")
+        except TypeError:
+            _wake_model = Model(wakeword_model_paths=[model_path])
+
+        _pa = pyaudio.PyAudio()
+        _mic_stream = _open_mic_stream(_pa)
+
+    if _mic_stream is None:
+        _wake_audio_ready = False
+        return False
+
+    logger.info("唤醒模型已加载")
+    _wake_audio_ready = True
+    return True
+
+
+def wait_for_wake_word(model_path: str | os.PathLike):
+    if TEXT_DEBUG:
+        logger.debug("等待唤醒 (/wake、Enter 或界面「对话」)...")
+        wake_event.clear()
         while True:
             if wake_event.is_set():
-                print("\n🔔 [唤醒] 界面按钮触发对话")
+                logger.info("唤醒 source=text_debug")
                 wake_display()
                 return True
+            time.sleep(0.1)
 
-            if downsample_factor == 1:
-                pcm = mic_stream.read(1280, exception_on_overflow=False)
-                audio_data = np.frombuffer(pcm, dtype=np.int16)
-            else:
-                pcm = mic_stream.read(1280 * 3, exception_on_overflow=False)
-                audio_data = np.frombuffer(pcm, dtype=np.int16)[::3]
+    if not _ensure_wake_audio(model_path):
+        return False
 
-            prediction = oww_model.predict(audio_data)
+    wake_event.clear()
 
-            for _mdl_name, score in prediction.items():
-                if score > WAKE_WORD_THRESHOLD:
-                    print(f"\n🔔 [唤醒] 检测到唤醒词！(置信度: {score:.2f})")
-                    wake_display()
-                    return True
-    finally:
-        mic_stream.stop_stream()
-        mic_stream.close()
-        pa.terminate()
+    while True:
+        if wake_event.is_set():
+            logger.info("唤醒 source=button")
+            wake_display()
+            return True
+
+        if _downsample_factor == 1:
+            pcm = _mic_stream.read(1280, exception_on_overflow=False)
+            audio_data = np.frombuffer(pcm, dtype=np.int16)
+        else:
+            pcm = _mic_stream.read(1280 * 3, exception_on_overflow=False)
+            audio_data = np.frombuffer(pcm, dtype=np.int16)[::3]
+
+        prediction = _wake_model.predict(audio_data)
+
+        for _mdl_name, score in prediction.items():
+            if score > WAKE_WORD_THRESHOLD:
+                logger.info("唤醒 source=keyword score=%.2f", score)
+                wake_display()
+                return True
 
 
 async def play_audio(path: str | os.PathLike):
     if TEXT_DEBUG:
-        print(f"[播放] {path}")
+        logger.debug("播放 %s", path)
         return
 
     pygame.mixer.music.load(os.fspath(path))
@@ -204,6 +234,6 @@ def stop_playback():
 async def ensure_wake_audio(path: str | os.PathLike):
     path = os.fspath(path)
     if not os.path.exists(path):
-        print("\n[系统状态] 正在预生成唤醒提示音...")
+        logger.info("正在预生成唤醒提示音...")
         tts = edge_tts.Communicate("我在", "zh-CN-XiaoxiaoNeural")
         await tts.save(path)

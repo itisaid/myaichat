@@ -3,6 +3,9 @@ import sys
 import threading
 
 from config import wake_event
+from log_config import get_logger
+
+logger = get_logger("text_debug")
 
 user_text_queue: asyncio.Queue[str] | None = None
 
@@ -12,7 +15,7 @@ def start_text_debug_reader(loop: asyncio.AbstractEventLoop) -> asyncio.Queue[st
     user_text_queue = asyncio.Queue()
 
     def _reader():
-        print("\n[TEXT_DEBUG] 输入 /wake 或 Enter 唤醒，唤醒后输入用户话")
+        logger.debug("输入 /wake 或 Enter 唤醒，唤醒后输入用户话")
         while True:
             try:
                 line = sys.stdin.readline()
@@ -22,7 +25,7 @@ def start_text_debug_reader(loop: asyncio.AbstractEventLoop) -> asyncio.Queue[st
                 break
             text = line.rstrip("\n")
             if text == "" or text == "/wake":
-                print("[TEXT_DEBUG] 唤醒")
+                logger.debug("唤醒")
                 wake_event.set()
             else:
                 asyncio.run_coroutine_threadsafe(user_text_queue.put(text), loop)

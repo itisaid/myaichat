@@ -10,6 +10,9 @@ from config import (
     DISPLAY_WAKE_USE_XDOTOOL,
     TOUCH_MONITOR_ENABLED,
 )
+from log_config import get_logger
+
+logger = get_logger("display")
 
 _wake_lock = threading.Lock()
 _last_wake_at = 0.0
@@ -38,11 +41,11 @@ def _run_cmd(args: list[str]) -> bool:
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "").strip()
             if err:
-                print(f"[display] {' '.join(args)} failed: {err}")
+                logger.warning("%s failed: %s", " ".join(args), err)
             return False
         return True
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-        print(f"[display] {' '.join(args)} error: {exc}")
+        logger.warning("%s error: %s", " ".join(args), exc)
         return False
 
 
@@ -93,7 +96,7 @@ def _find_touch_devices():
     try:
         import evdev
     except ImportError:
-        print("[display] evdev not installed, touch monitor disabled")
+        logger.warning("evdev 未安装，触摸监听已禁用")
         return []
 
     devices = []
@@ -103,7 +106,7 @@ def _find_touch_devices():
             if _is_touch_device(device):
                 devices.append(device)
         except (OSError, PermissionError) as exc:
-            print(f"[display] skip {path}: {exc}")
+            logger.debug("skip %s: %s", path, exc)
     return devices
 
 
@@ -126,11 +129,11 @@ def _touch_event_wakes(event) -> bool:
 def _touch_monitor_loop() -> None:
     devices = _find_touch_devices()
     if not devices:
-        print("[display] no touch input device found for monitor")
+        logger.warning("未找到触摸输入设备")
         return
 
     names = ", ".join(device.name or device.path for device in devices)
-    print(f"[display] touch monitor listening: {names}")
+    logger.info("触摸监听: %s", names)
 
     while True:
         try:
@@ -140,7 +143,7 @@ def _touch_monitor_loop() -> None:
                     if _touch_event_wakes(event):
                         wake_display()
         except OSError as exc:
-            print(f"[display] touch monitor error: {exc}")
+            logger.warning("触摸监听异常: %s", exc)
             time.sleep(5)
             devices = _find_touch_devices()
             if not devices:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 
 from asr import transcribe
 from audio import (
@@ -25,9 +26,12 @@ from display import wake_display
 from llm import get_provider
 from llm.truncate import truncate_reply
 from llm.types import ChatOptions, ChatResult
+from log_config import get_logger, truncate_text
 from tts import synthesize
 import text_debug
 from websocket_manager import ConnectionManager
+
+logger = get_logger("flow")
 
 
 def _sleeping_status() -> str:
@@ -39,6 +43,7 @@ def _sleeping_status() -> str:
 async def abort_to_sleeping(manager: ConnectionManager):
     cancel_event.clear()
     stop_playback()
+    logger.info("用户终止 -> 休眠")
     await manager.broadcast_status(_sleeping_status(), "sleeping", stop_enabled=False)
 
 
@@ -75,12 +80,13 @@ async def smart_speaker_loop(manager: ConnectionManager):
 
     await ensure_wake_audio(WAKE_AUDIO_PATH)
     if TEXT_DEBUG:
-        print("[TEXT_DEBUG] 跳过麦克风校准")
+        logger.debug("跳过麦克风校准")
     else:
         calibrate_noise()
 
     while True:
         await manager.broadcast_status(_sleeping_status(), "sleeping", stop_enabled=False)
+        logger.info("进入休眠，等待唤醒")
         woke = await asyncio.to_thread(wait_for_wake_word, WAKE_MODEL_PATH)
         if not woke:
             continue
@@ -106,9 +112,11 @@ async def smart_speaker_loop(manager: ConnectionManager):
             )
 
             try:
+                t0 = time.monotonic()
                 user_text = await await_cancellable(
                     asyncio.to_thread(transcribe, wav_file)
                 )
+                asr_elapsed = time.monotonic() - t0
             finally:
                 if wav_file and os.path.exists(wav_file):
                     os.remove(wav_file)
@@ -116,6 +124,13 @@ async def smart_speaker_loop(manager: ConnectionManager):
             if user_text is CANCELLED:
                 await abort_to_sleeping(manager)
                 continue
+
+            if user_text:
+                logger.info(
+                    '识别: "%s" (%.1fs)',
+                    truncate_text(user_text),
+                    asr_elapsed,
+                )
 
         if not user_text:
             continue
@@ -139,8 +154,10 @@ async def smart_speaker_loop(manager: ConnectionManager):
 
         await manager.broadcast_status("思考中...", "transcribing", stop_enabled=True)
 
+        llm_elapsed = 0.0
         try:
             provider = get_provider(app_state["model"])
+            t0 = time.monotonic()
             result = await await_cancellable(
                 provider.chat(
                     user_text,
@@ -149,6 +166,7 @@ async def smart_speaker_loop(manager: ConnectionManager):
                     history=get_history(),
                 )
             )
+            llm_elapsed = time.monotonic() - t0
         except ValueError:
             result = ChatResult(content="我不知道我在用什么模型...")
 
@@ -165,6 +183,8 @@ async def smart_speaker_loop(manager: ConnectionManager):
                     }
                 )
             )
+            if result.search_status and result.search_status != "none":
+                logger.info("搜索状态=%s", result.search_status)
 
         if result.reasoning:
             await manager.broadcast(
@@ -173,9 +193,20 @@ async def smart_speaker_loop(manager: ConnectionManager):
 
         reply_text = truncate_reply(result.content)
         if len(reply_text) < len(result.content):
-            print(
-                f"⚠️ 回答已截断: {len(result.content)} 字 -> {len(reply_text)} 字"
+            logger.warning(
+                "回答已截断 %d -> %d 字",
+                len(result.content),
+                len(reply_text),
             )
+
+        logger.info(
+            "model=%s thinking=%s search=%s 耗时=%.1fs 回复=%d字",
+            app_state["model"],
+            options.enable_thinking,
+            options.enable_search,
+            llm_elapsed,
+            len(reply_text),
+        )
 
         append_turn(user_text, result.content)
 
@@ -183,6 +214,7 @@ async def smart_speaker_loop(manager: ConnectionManager):
         await manager.broadcast(json.dumps({"type": "ai_msg", "text": reply_text}))
 
         try:
+            t0 = time.monotonic()
             if (
                 await await_cancellable(
                     synthesize(reply_text, str(REPLY_AUDIO_PATH))
@@ -192,10 +224,15 @@ async def smart_speaker_loop(manager: ConnectionManager):
                 await abort_to_sleeping(manager)
                 continue
 
+            tts_elapsed = time.monotonic() - t0
+            logger.info("合成完成 (%.1fs)", tts_elapsed)
+
             await play_audio(REPLY_AUDIO_PATH)
             if cancel_event.is_set():
                 await abort_to_sleeping(manager)
                 continue
         except Exception as e:
-            print(f"❌ 语音合成或播放失败: {e}")
+            logger.error("TTS/播放失败: %s", e)
             await asyncio.sleep(2)
+
+        logger.info("对话结束，回到休眠")

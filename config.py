@@ -16,6 +16,7 @@ DASHSCOPE_BASE_URL = os.getenv(
 )
 DEFAULT_MODEL = "qwen-plus"
 TEXT_DEBUG = os.getenv("TEXT_DEBUG", "").lower() in ("1", "true", "yes")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG" if TEXT_DEBUG else "INFO")
 DISPLAY_WAKE_ENABLED = os.getenv("DISPLAY_WAKE_ENABLED", "1") == "1"
 TOUCH_MONITOR_ENABLED = os.getenv("TOUCH_MONITOR_ENABLED", "1") == "1"
 DISPLAY_WAKE_USE_XDOTOOL = os.getenv("DISPLAY_WAKE_USE_XDOTOOL", "0") == "1"

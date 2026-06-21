@@ -6,7 +6,10 @@ from openai import AsyncOpenAI
 
 from config import cancel_event
 from llm.types import ChatResult
+from log_config import get_logger
 from search.duckduckgo import SEARCH_FALLBACK, web_search
+
+logger = get_logger("search")
 
 WEB_SEARCH_TOOL = {
     "type": "function",
@@ -118,10 +121,13 @@ async def run_tool_loop(
                 query = fn_args.get("query", "")
                 if query:
                     search_queries.append(query)
+                    logger.debug("工具搜索 query=%s", query)
                 if tool_status == "success":
                     search_status = "success"
                 elif search_status != "success":
                     search_status = tool_status
+                if query:
+                    logger.info("工具搜索 状态=%s query=%s", tool_status, query)
 
             messages.append(
                 {

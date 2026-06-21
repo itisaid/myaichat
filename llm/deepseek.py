@@ -1,9 +1,12 @@
 from openai import AsyncOpenAI
 
 from config import DEEPSEEK_KEY, MAX_REPLY_TOKENS, MAX_REPLY_TOKENS_THINKING
+from log_config import get_logger
 from llm.base import LLMProvider
 from llm.tool_loop import run_tool_loop
 from llm.types import ChatOptions, ChatResult, ProviderCapabilities
+
+logger = get_logger("llm")
 
 
 class DeepSeekProvider(LLMProvider):
@@ -65,7 +68,7 @@ class DeepSeekProvider(LLMProvider):
             content = message.content or ""
             return ChatResult(content=content, reasoning=reasoning)
         except Exception as e:
-            print(f"❌ 大模型调用失败: {e}")
+            logger.error("大模型调用失败: %s", e)
             return ChatResult(
                 content="抱歉主人，大模型接口调用失败了，请检查网络或API余额。"
             )

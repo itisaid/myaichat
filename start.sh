@@ -2,6 +2,8 @@
 
 export DISPLAY=:0
 export XAUTHORITY=$HOME/.Xauthority
+export PYGAME_HIDE_SUPPORT_PROMPT=1
+export PYTHONWARNINGS="ignore::DeprecationWarning"
 
 # 1. 启动后台服务 (使用 $HOME 自动匹配用户名)
 source $HOME/myaichat/venv/bin/activate

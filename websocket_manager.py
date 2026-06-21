@@ -4,6 +4,9 @@ from fastapi import WebSocket
 
 from config import TEXT_DEBUG, app_state
 from llm import get_capabilities
+from log_config import get_logger
+
+logger = get_logger("ws")
 
 
 class ConnectionManager:
@@ -37,11 +40,13 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        logger.info("客户端连接 (共 %d)", len(self.active_connections))
         await websocket.send_text(self._config_payload())
         await websocket.send_text(self._status_payload())
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
+        logger.info("客户端断开 (共 %d)", len(self.active_connections))
 
     async def broadcast(self, message: str):
         for connection in self.active_connections:

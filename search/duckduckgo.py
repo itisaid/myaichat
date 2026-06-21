@@ -2,6 +2,10 @@ import asyncio
 
 from duckduckgo_search import DDGS
 
+from log_config import get_logger
+
+logger = get_logger("search")
+
 SEARCH_TIMEOUT = 8.0
 SEARCH_FALLBACK = "搜索未返回结果，请基于已有知识回答。"
 
@@ -17,10 +21,10 @@ async def web_search(query: str, timeout: float = SEARCH_TIMEOUT) -> tuple[str |
             return result, "success"
         return None, "failed"
     except asyncio.TimeoutError:
-        print(f"⏱️ 联网搜索超时: {query}")
+        logger.warning("联网搜索超时: %s", query)
         return None, "timeout"
     except Exception as e:
-        print(f"❌ 联网搜索失败: {e}")
+        logger.error("联网搜索失败: %s", e)
         return None, "failed"
 
 

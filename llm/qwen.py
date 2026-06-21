@@ -6,8 +6,11 @@ from config import (
     MAX_REPLY_TOKENS,
     MAX_REPLY_TOKENS_THINKING,
 )
+from log_config import get_logger
 from llm.base import LLMProvider
 from llm.types import ChatOptions, ChatResult, ProviderCapabilities
+
+logger = get_logger("llm")
 
 
 class QwenProvider(LLMProvider):
@@ -69,7 +72,7 @@ class QwenProvider(LLMProvider):
                 search_status=search_status,
             )
         except Exception as e:
-            print(f"❌ 大模型调用失败: {e}")
+            logger.error("大模型调用失败: %s", e)
             return ChatResult(
                 content="抱歉主人，大模型接口调用失败了，请检查网络或API余额。",
                 search_status="failed" if options.enable_search else "none",
