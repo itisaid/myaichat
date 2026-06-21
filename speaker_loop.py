@@ -21,6 +21,7 @@ from config import (
     cancel_event,
     load_system_prompt,
 )
+from display import wake_display
 from llm import get_provider
 from llm.truncate import truncate_reply
 from llm.types import ChatOptions, ChatResult
@@ -80,7 +81,10 @@ async def smart_speaker_loop(manager: ConnectionManager):
 
     while True:
         await manager.broadcast_status(_sleeping_status(), "sleeping", stop_enabled=False)
-        await asyncio.to_thread(wait_for_wake_word, WAKE_MODEL_PATH)
+        woke = await asyncio.to_thread(wait_for_wake_word, WAKE_MODEL_PATH)
+        if not woke:
+            continue
+        wake_display()
 
         await manager.broadcast_status(
             "✨ 我在！请说话...", "listening", stop_enabled=False

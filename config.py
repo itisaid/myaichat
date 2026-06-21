@@ -16,6 +16,9 @@ DASHSCOPE_BASE_URL = os.getenv(
 )
 DEFAULT_MODEL = "qwen-plus"
 TEXT_DEBUG = os.getenv("TEXT_DEBUG", "").lower() in ("1", "true", "yes")
+DISPLAY_WAKE_ENABLED = os.getenv("DISPLAY_WAKE_ENABLED", "1") == "1"
+TOUCH_MONITOR_ENABLED = os.getenv("TOUCH_MONITOR_ENABLED", "1") == "1"
+DISPLAY_WAKE_USE_XDOTOOL = os.getenv("DISPLAY_WAKE_USE_XDOTOOL", "0") == "1"
 
 BASE_DIR = Path(__file__).resolve().parent
 SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "system.txt"

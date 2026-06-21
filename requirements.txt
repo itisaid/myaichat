@@ -11,3 +11,4 @@ numpy
 sounddevice
 scipy
 jinja2
+evdev

@@ -80,6 +80,13 @@ window.addEventListener('pointerup', function() {
     endHoldRecord();
 });
 
+function sendDisplayWake() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'display_wake' }));
+}
+
+document.addEventListener('pointerdown', sendDisplayWake, { passive: true });
+
 wakeBtn.addEventListener('click', function() {
     if (ws && ws.readyState === WebSocket.OPEN && !wakeBtn.disabled) {
         ws.send(JSON.stringify({ type: 'wake' }));

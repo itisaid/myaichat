@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config import TEXT_DEBUG, app_state, cancel_event, record_hold_event, wake_event
+from display import start_touch_monitor, wake_display
 from speaker_loop import smart_speaker_loop
 from text_debug import start_text_debug_reader
 from websocket_manager import manager
@@ -48,10 +49,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
 
             elif message.get("type") == "wake":
+                wake_display()
                 wake_event.set()
                 print("前端按钮触发唤醒")
 
+            elif message.get("type") == "display_wake":
+                wake_display()
+
             elif message.get("type") == "record_hold":
+                wake_display()
                 if app_state["phase"] != "listening":
                     continue
                 if message.get("active"):
@@ -60,6 +66,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     record_hold_event.clear()
 
             elif message.get("type") == "stop":
+                wake_display()
                 if app_state.get("stop_enabled"):
                     cancel_event.set()
                     print("前端按钮触发终止")
@@ -70,6 +77,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.on_event("startup")
 async def startup_event():
+    start_touch_monitor()
     if TEXT_DEBUG:
         start_text_debug_reader(asyncio.get_running_loop())
         print("TEXT_DEBUG 模式：终端 /wake + 文本输入，浏览器仅观察")

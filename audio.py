@@ -10,6 +10,7 @@ import pygame
 import speech_recognition as sr
 from openwakeword.model import Model
 
+from display import wake_display
 from config import (
     MAX_HOLD_RECORD_SECONDS,
     MIN_RECORD_RMS,
@@ -108,6 +109,7 @@ def wait_for_wake_word(model_path: str | os.PathLike):
         while True:
             if wake_event.is_set():
                 print("\n🔔 [唤醒] 终端或界面触发对话")
+                wake_display()
                 return True
             time.sleep(0.1)
 
@@ -155,6 +157,7 @@ def wait_for_wake_word(model_path: str | os.PathLike):
         while True:
             if wake_event.is_set():
                 print("\n🔔 [唤醒] 界面按钮触发对话")
+                wake_display()
                 return True
 
             if downsample_factor == 1:
@@ -169,6 +172,7 @@ def wait_for_wake_word(model_path: str | os.PathLike):
             for _mdl_name, score in prediction.items():
                 if score > WAKE_WORD_THRESHOLD:
                     print(f"\n🔔 [唤醒] 检测到唤醒词！(置信度: {score:.2f})")
+                    wake_display()
                     return True
     finally:
         mic_stream.stop_stream()
