@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import json
 import ssl
-import time
 import wave
 from email.utils import formatdate
 from urllib.parse import urlencode
@@ -18,7 +17,6 @@ logger = get_logger("asr.xfyun")
 _HOST = "iat.xf-yun.com"
 _PATH = "/v1"
 _FRAME_SIZE = 1280
-_FRAME_INTERVAL = 0.04
 _MAX_PCM_BYTES = 16000 * 2 * 60
 _EMPTY_PLACEHOLDERS = frozenset({"none", "null", "nan"})
 
@@ -190,8 +188,6 @@ def transcribe(wav_path: str) -> str:
                 frame = _middle_frame(base64.b64encode(chunk).decode("ascii"), seq)
 
             ws.send(json.dumps(frame))
-            if not is_last:
-                time.sleep(_FRAME_INTERVAL)
 
         seq += 1
         ws.send(json.dumps(_last_frame(seq)))

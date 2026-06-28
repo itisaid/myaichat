@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import wave
+from collections import deque
 
 import edge_tts
 import numpy as np
@@ -35,6 +36,7 @@ recognizer = sr.Recognizer()
 MIC_SAMPLE_RATE = 16000
 MIC_SAMPLE_WIDTH = 2
 FRAME_SAMPLES = 1280
+PRE_BUFFER_FRAMES = 5   # 5 × 80ms = 400ms look-back before speech onset
 
 _wake_model: Model | None = None
 _pa: pyaudio.PyAudio | None = None
@@ -118,12 +120,15 @@ def record_audio():
 
     try:
         frames: list[bytes] = []
+        pre_buffer: deque[bytes] = deque(maxlen=PRE_BUFFER_FRAMES)
         wait_deadline = time.time() + RECORD_START_TIMEOUT
         while time.time() < wait_deadline:
             buffer = _read_mic_bytes()
             if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                frames.extend(pre_buffer)
                 frames.append(buffer)
                 break
+            pre_buffer.append(buffer)
         else:
             logger.warning("录音超时或音量过低，跳过本轮")
             return None
