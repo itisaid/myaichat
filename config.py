@@ -10,6 +10,10 @@ load_dotenv()
 
 ALI_KEY = os.getenv("ALI_KEY")
 DEEPSEEK_KEY = os.getenv("DEEPSEEK_KEY")
+XFYUN_APP_ID = os.getenv("XFYUN_APP_ID")
+XFYUN_API_KEY = os.getenv("XFYUN_API_KEY")
+XFYUN_API_SECRET = os.getenv("XFYUN_API_SECRET")
+ASR_PROVIDER = os.getenv("ASR_PROVIDER", "xfyun")
 DASHSCOPE_BASE_URL = os.getenv(
     "DASHSCOPE_BASE_URL",
     "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -25,7 +29,7 @@ BASE_DIR = Path(__file__).resolve().parent
 SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "system.txt"
 WAKE_MODEL_PATH = BASE_DIR / "alexa.onnx"
 WAKE_AUDIO_PATH = BASE_DIR / "wozai.mp3"
-WAKE_WORD_THRESHOLD = 0.4
+WAKE_WORD_THRESHOLD = 0.5
 REPLY_AUDIO_PATH = BASE_DIR / "reply.mp3"
 MIN_RECORD_RMS = 400
 PHRASE_TIME_LIMIT = 10

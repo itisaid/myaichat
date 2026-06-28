@@ -12,3 +12,4 @@ sounddevice
 scipy
 jinja2
 evdev
+websocket-client

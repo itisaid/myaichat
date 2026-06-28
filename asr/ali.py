@@ -5,7 +5,7 @@ from dashscope.audio.asr import Recognition
 
 from log_config import get_logger
 
-logger = get_logger("asr")
+logger = get_logger("asr.ali")
 
 _EMPTY_PLACEHOLDERS = frozenset({"none", "null", "nan"})
 
@@ -53,5 +53,5 @@ def transcribe(wav_path: str) -> str:
             return ""
         return text
     except Exception as e:
-        logger.error("语音识别请求失败: %s", e)
+        logger.error("阿里 ASR 请求失败: %s", e)
         return ""
