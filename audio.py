@@ -41,33 +41,28 @@ def _chunk_energy(buffer: bytes) -> float:
     return float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
 
 
-def _pause_wake_mic():
-    """录音前释放唤醒占用的麦克风流（USB 麦通常不能双开）。"""
-    global _mic_stream
+def _close_wake_mic():
+    """关闭唤醒麦克风流；对话处理期间保持关闭，避免缓冲区堆积误唤醒。"""
+    global _mic_stream, _pa
     if _mic_stream is not None:
         try:
             _mic_stream.stop_stream()
             _mic_stream.close()
         except Exception as e:
-            logger.warning("释放唤醒麦克风流失败: %s", e)
+            logger.warning("关闭唤醒麦克风流失败: %s", e)
         _mic_stream = None
-
-
-def _resume_wake_mic():
-    """录音结束后恢复唤醒麦克风流。"""
-    global _mic_stream
-    if not _wake_audio_ready or _pa is None or _mic_stream is not None:
-        return
-    _mic_stream = _open_mic_stream(_pa)
-    if _mic_stream is None:
-        logger.error("恢复唤醒麦克风流失败")
+    if _pa is not None:
+        try:
+            _pa.terminate()
+        except Exception as e:
+            logger.warning("释放 PyAudio 失败: %s", e)
+        _pa = None
 
 
 def record_audio():
     record_hold_event.clear()
     logger.info("开始录音")
 
-    _pause_wake_mic()
     try:
         with suppress_native_stderr():
             with sr.Microphone() as source:
@@ -134,8 +129,6 @@ def record_audio():
     except Exception as e:
         logger.error("录音失败: %s", e)
         return None
-    finally:
-        _resume_wake_mic()
 
 
 def calibrate_noise():
@@ -151,31 +144,32 @@ def calibrate_noise():
 
 def _open_mic_stream(pa: pyaudio.PyAudio):
     global _downsample_factor
-    try:
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=16000,
-            input=True,
-            frames_per_buffer=1280,
-        )
-        _downsample_factor = 1
-        return stream
-    except Exception:
-        logger.warning("16000Hz 不可用，使用 48000Hz 兼容模式")
+    with suppress_native_stderr():
         try:
             stream = pa.open(
                 format=pyaudio.paInt16,
                 channels=1,
-                rate=48000,
+                rate=16000,
                 input=True,
-                frames_per_buffer=1280 * 3,
+                frames_per_buffer=1280,
             )
-            _downsample_factor = 3
+            _downsample_factor = 1
             return stream
         except Exception:
-            logger.error("麦克风被占用或无法打开，请检查硬件")
-            return None
+            logger.warning("16000Hz 不可用，使用 48000Hz 兼容模式")
+            try:
+                stream = pa.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=48000,
+                    input=True,
+                    frames_per_buffer=1280 * 3,
+                )
+                _downsample_factor = 3
+                return stream
+            except Exception:
+                logger.error("麦克风被占用或无法打开，请检查硬件")
+                return None
 
 
 def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
@@ -184,31 +178,28 @@ def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
     if _wake_audio_ready and _mic_stream is not None:
         return True
 
-    if _wake_audio_ready and _pa is not None:
-        _mic_stream = _open_mic_stream(_pa)
-        if _mic_stream is not None:
-            return True
-        logger.error("唤醒麦克风流恢复失败")
-        return False
+    if _wake_model is None:
+        model_path = os.fspath(model_path)
+        logger.info("正在加载唤醒模型...")
+        with suppress_native_stderr():
+            try:
+                _wake_model = Model(
+                    wakeword_models=[model_path], inference_framework="onnx"
+                )
+            except TypeError:
+                _wake_model = Model(wakeword_model_paths=[model_path])
+        _wake_audio_ready = True
+        logger.info("唤醒模型已加载")
 
-    model_path = os.fspath(model_path)
-    logger.info("正在加载唤醒模型...")
-
-    with suppress_native_stderr():
-        try:
-            _wake_model = Model(wakeword_models=[model_path], inference_framework="onnx")
-        except TypeError:
-            _wake_model = Model(wakeword_model_paths=[model_path])
-
-        _pa = pyaudio.PyAudio()
-        _mic_stream = _open_mic_stream(_pa)
+    if _pa is None:
+        with suppress_native_stderr():
+            _pa = pyaudio.PyAudio()
 
     if _mic_stream is None:
-        _wake_audio_ready = False
-        return False
+        _mic_stream = _open_mic_stream(_pa)
+        if _mic_stream is None:
+            return False
 
-    logger.info("唤醒模型已加载")
-    _wake_audio_ready = True
     return True
 
 
@@ -231,6 +222,7 @@ def wait_for_wake_word(model_path: str | os.PathLike):
     while True:
         if wake_event.is_set():
             logger.info("唤醒 source=button")
+            _close_wake_mic()
             wake_display()
             return True
 
@@ -246,6 +238,7 @@ def wait_for_wake_word(model_path: str | os.PathLike):
         for _mdl_name, score in prediction.items():
             if score > WAKE_WORD_THRESHOLD:
                 logger.info("唤醒 source=keyword score=%.2f", score)
+                _close_wake_mic()
                 wake_display()
                 return True
 
