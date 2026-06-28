@@ -54,6 +54,15 @@ def _chunk_energy(buffer: bytes) -> float:
     return float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
 
 
+def reset_wake_model():
+    """清空唤醒模型内部音频/预测缓冲，避免上次唤醒词残留导致立即误唤醒。"""
+    if _wake_model is not None and hasattr(_wake_model, "reset"):
+        try:
+            _wake_model.reset()
+        except Exception as e:
+            logger.warning("唤醒模型 reset 失败: %s", e)
+
+
 def pause_wake_listen():
     """对话期间停止唤醒检测，后台 drain 防止缓冲区堆积。"""
     global _wake_listen_enabled
@@ -64,6 +73,7 @@ def pause_wake_listen():
 def resume_wake_listen():
     """回到休眠监听（不 drain，供 abort 等路径快速恢复）。"""
     _stop_drain_thread()
+    reset_wake_model()
     global _wake_listen_enabled
     _wake_listen_enabled = True
 
@@ -74,6 +84,7 @@ def prepare_wake_listen(drain_sec: float | None = None):
     _wake_listen_enabled = False
     sec = WAKE_PRE_LISTEN_DRAIN_SEC if drain_sec is None else drain_sec
     drain_mic(sec)
+    reset_wake_model()
     _wake_listen_enabled = True
 
 
