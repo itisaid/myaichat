@@ -18,6 +18,7 @@ from config import (
     TEXT_DEBUG,
     WAKE_AUDIO_PATH,
     WAKE_MODEL_PATH,
+    WAKE_POST_PLAYBACK_COOLDOWN,
     app_state,
     cancel_event,
     load_system_prompt,
@@ -228,6 +229,8 @@ async def smart_speaker_loop(manager: ConnectionManager):
             logger.info("合成完成 (%.1fs)", tts_elapsed)
 
             await play_audio(REPLY_AUDIO_PATH)
+            if WAKE_POST_PLAYBACK_COOLDOWN > 0:
+                await asyncio.sleep(WAKE_POST_PLAYBACK_COOLDOWN)
             if cancel_event.is_set():
                 await abort_to_sleeping(manager)
                 continue

@@ -17,6 +17,8 @@ from config import (
     PHRASE_TIME_LIMIT,
     RECORD_START_TIMEOUT,
     TEXT_DEBUG,
+    WAKE_KEYWORD_HITS,
+    WAKE_MIC_WARMUP_SEC,
     WAKE_WORD_THRESHOLD,
     cancel_event,
     record_hold_event,
@@ -32,6 +34,7 @@ _pa: pyaudio.PyAudio | None = None
 _mic_stream = None
 _downsample_factor = 1
 _wake_audio_ready = False
+_mic_needs_warmup = False
 
 
 def _chunk_energy(buffer: bytes) -> float:
@@ -173,7 +176,7 @@ def _open_mic_stream(pa: pyaudio.PyAudio):
 
 
 def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
-    global _wake_model, _pa, _mic_stream, _wake_audio_ready
+    global _wake_model, _pa, _mic_stream, _wake_audio_ready, _mic_needs_warmup
 
     if _wake_audio_ready and _mic_stream is not None:
         return True
@@ -199,9 +202,30 @@ def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
         _mic_stream = _open_mic_stream(_pa)
         if _mic_stream is None:
             return False
+        _mic_needs_warmup = True
 
     return True
 
+
+
+def _read_wake_frame() -> np.ndarray:
+    if _downsample_factor == 1:
+        pcm = _mic_stream.read(1280, exception_on_overflow=False)
+        return np.frombuffer(pcm, dtype=np.int16)
+    pcm = _mic_stream.read(1280 * 3, exception_on_overflow=False)
+    return np.frombuffer(pcm, dtype=np.int16)[::3]
+
+
+def _warmup_wake_mic() -> None:
+    global _mic_needs_warmup
+    if not _mic_needs_warmup or _mic_stream is None or WAKE_MIC_WARMUP_SEC <= 0:
+        _mic_needs_warmup = False
+        return
+    logger.info("唤醒麦克风预热 %.1fs", WAKE_MIC_WARMUP_SEC)
+    deadline = time.time() + WAKE_MIC_WARMUP_SEC
+    while time.time() < deadline:
+        _read_wake_frame()
+    _mic_needs_warmup = False
 
 def wait_for_wake_word(model_path: str | os.PathLike):
     if TEXT_DEBUG:
@@ -218,6 +242,8 @@ def wait_for_wake_word(model_path: str | os.PathLike):
         return False
 
     wake_event.clear()
+    _warmup_wake_mic()
+    hit_streak = 0
 
     while True:
         if wake_event.is_set():
@@ -226,21 +252,25 @@ def wait_for_wake_word(model_path: str | os.PathLike):
             wake_display()
             return True
 
-        if _downsample_factor == 1:
-            pcm = _mic_stream.read(1280, exception_on_overflow=False)
-            audio_data = np.frombuffer(pcm, dtype=np.int16)
-        else:
-            pcm = _mic_stream.read(1280 * 3, exception_on_overflow=False)
-            audio_data = np.frombuffer(pcm, dtype=np.int16)[::3]
+        prediction = _wake_model.predict(_read_wake_frame())
 
-        prediction = _wake_model.predict(audio_data)
-
+        triggered = False
         for _mdl_name, score in prediction.items():
             if score > WAKE_WORD_THRESHOLD:
-                logger.info("唤醒 source=keyword score=%.2f", score)
-                _close_wake_mic()
-                wake_display()
-                return True
+                hit_streak += 1
+                if hit_streak >= WAKE_KEYWORD_HITS:
+                    logger.info(
+                        "唤醒 source=keyword score=%.2f hits=%d",
+                        score,
+                        hit_streak,
+                    )
+                    _close_wake_mic()
+                    wake_display()
+                    return True
+                triggered = True
+                break
+        if not triggered:
+            hit_streak = 0
 
 
 async def play_audio(path: str | os.PathLike):
