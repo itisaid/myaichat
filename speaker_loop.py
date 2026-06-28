@@ -9,6 +9,7 @@ from audio import (
     drain_mic,
     ensure_wake_audio,
     play_audio,
+    prepare_wake_listen,
     record_audio,
     resume_wake_listen,
     stop_playback,
@@ -21,6 +22,7 @@ from config import (
     WAKE_AUDIO_PATH,
     WAKE_MODEL_PATH,
     WAKE_POST_PLAYBACK_DRAIN_SEC,
+    WAKE_PROMPT_DRAIN_SEC,
     app_state,
     cancel_event,
     load_system_prompt,
@@ -46,7 +48,7 @@ def _sleeping_status() -> str:
 async def abort_to_sleeping(manager: ConnectionManager):
     cancel_event.clear()
     stop_playback()
-    resume_wake_listen()
+    await asyncio.to_thread(prepare_wake_listen)
     logger.info("用户终止 -> 休眠")
     await manager.broadcast_status(_sleeping_status(), "sleeping", stop_enabled=False)
 
@@ -100,6 +102,8 @@ async def smart_speaker_loop(manager: ConnectionManager):
             "✨ 我在！请说话...", "listening", stop_enabled=False
         )
         await play_audio(WAKE_AUDIO_PATH)
+        if WAKE_PROMPT_DRAIN_SEC > 0:
+            await asyncio.to_thread(drain_mic, WAKE_PROMPT_DRAIN_SEC)
         if cancel_event.is_set():
             await abort_to_sleeping(manager)
             continue
@@ -233,8 +237,11 @@ async def smart_speaker_loop(manager: ConnectionManager):
 
             await play_audio(REPLY_AUDIO_PATH)
             if WAKE_POST_PLAYBACK_DRAIN_SEC > 0:
-                await asyncio.to_thread(drain_mic, WAKE_POST_PLAYBACK_DRAIN_SEC)
-            resume_wake_listen()
+                await asyncio.to_thread(
+                    prepare_wake_listen, WAKE_POST_PLAYBACK_DRAIN_SEC
+                )
+            else:
+                resume_wake_listen()
             if cancel_event.is_set():
                 await abort_to_sleeping(manager)
                 continue

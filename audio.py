@@ -19,7 +19,10 @@ from config import (
     PHRASE_TIME_LIMIT,
     RECORD_START_TIMEOUT,
     TEXT_DEBUG,
+    WAKE_KEYWORD_HITS,
+    WAKE_PRE_LISTEN_DRAIN_SEC,
     WAKE_WORD_THRESHOLD,
+    RECORD_ENERGY_THRESHOLD_MAX,
     cancel_event,
     record_hold_event,
     wake_event,
@@ -59,9 +62,18 @@ def pause_wake_listen():
 
 
 def resume_wake_listen():
-    """回到休眠监听：停止 drain，恢复唤醒检测。"""
+    """回到休眠监听（不 drain，供 abort 等路径快速恢复）。"""
     _stop_drain_thread()
     global _wake_listen_enabled
+    _wake_listen_enabled = True
+
+
+def prepare_wake_listen(drain_sec: float | None = None):
+    """丢弃残留音频后再开启唤醒检测。"""
+    global _wake_listen_enabled
+    _wake_listen_enabled = False
+    sec = WAKE_PRE_LISTEN_DRAIN_SEC if drain_sec is None else drain_sec
+    drain_mic(sec)
     _wake_listen_enabled = True
 
 
@@ -76,15 +88,24 @@ def drain_mic(seconds: float = 0):
         _read_mic_frame()
 
 
+def _downsample_frame(pcm: bytes) -> np.ndarray:
+    samples = np.frombuffer(pcm, dtype=np.int16)
+    if _downsample_factor == 1:
+        return samples
+    return samples.reshape(-1, _downsample_factor).mean(axis=1).astype(np.int16)
+
+
 def _read_mic_frame() -> np.ndarray:
     with _mic_lock:
         if _mic_stream is None:
             return np.array([], dtype=np.int16)
         if _downsample_factor == 1:
             pcm = _mic_stream.read(FRAME_SAMPLES, exception_on_overflow=False)
-            return np.frombuffer(pcm, dtype=np.int16)
-        pcm = _mic_stream.read(FRAME_SAMPLES * 3, exception_on_overflow=False)
-        return np.frombuffer(pcm, dtype=np.int16)[::3]
+        else:
+            pcm = _mic_stream.read(
+                FRAME_SAMPLES * _downsample_factor, exception_on_overflow=False
+            )
+        return _downsample_frame(pcm)
 
 
 def _read_mic_bytes() -> bytes:
@@ -213,7 +234,9 @@ def calibrate_noise(model_path: str | os.PathLike):
             energies.append(_chunk_energy(_read_mic_bytes()))
         if energies:
             avg = sum(energies) / len(energies)
-            recognizer.energy_threshold = max(300, avg * 1.2)
+            recognizer.energy_threshold = min(
+                max(300, avg * 1.2), RECORD_ENERGY_THRESHOLD_MAX
+            )
         logger.info("噪声校准完成 threshold=%.0f", recognizer.energy_threshold)
     except Exception as e:
         logger.error("麦克风校准失败: %s", e)
@@ -295,8 +318,9 @@ def wait_for_wake_word(model_path: str | os.PathLike):
     if not _ensure_wake_audio(model_path):
         return False
 
-    resume_wake_listen()
+    prepare_wake_listen()
     wake_event.clear()
+    hit_streak = 0
 
     while True:
         if wake_event.is_set():
@@ -305,14 +329,29 @@ def wait_for_wake_word(model_path: str | os.PathLike):
             wake_display()
             return True
 
-        prediction = _wake_model.predict(_read_mic_frame())
+        frame = _read_mic_frame()
+        if frame.size != FRAME_SAMPLES:
+            continue
 
+        prediction = _wake_model.predict(frame)
+
+        triggered = False
         for _mdl_name, score in prediction.items():
             if score > WAKE_WORD_THRESHOLD:
-                logger.info("唤醒 source=keyword score=%.2f", score)
-                pause_wake_listen()
-                wake_display()
-                return True
+                hit_streak += 1
+                if hit_streak >= WAKE_KEYWORD_HITS:
+                    logger.info(
+                        "唤醒 source=keyword score=%.2f hits=%d",
+                        score,
+                        hit_streak,
+                    )
+                    pause_wake_listen()
+                    wake_display()
+                    return True
+                triggered = True
+                break
+        if not triggered:
+            hit_streak = 0
 
 
 async def play_audio(path: str | os.PathLike):
