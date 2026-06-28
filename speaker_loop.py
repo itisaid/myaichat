@@ -11,7 +11,6 @@ from audio import (
     play_audio,
     prepare_wake_listen,
     record_audio,
-    resume_wake_listen,
     stop_playback,
     wait_for_wake_word,
 )
@@ -21,7 +20,6 @@ from config import (
     TEXT_DEBUG,
     WAKE_AUDIO_PATH,
     WAKE_MODEL_PATH,
-    WAKE_POST_PLAYBACK_DRAIN_SEC,
     WAKE_PROMPT_DRAIN_SEC,
     app_state,
     cancel_event,
@@ -236,12 +234,6 @@ async def smart_speaker_loop(manager: ConnectionManager):
             logger.info("合成完成 (%.1fs)", tts_elapsed)
 
             await play_audio(REPLY_AUDIO_PATH)
-            if WAKE_POST_PLAYBACK_DRAIN_SEC > 0:
-                await asyncio.to_thread(
-                    prepare_wake_listen, WAKE_POST_PLAYBACK_DRAIN_SEC
-                )
-            else:
-                resume_wake_listen()
             if cancel_event.is_set():
                 await abort_to_sleeping(manager)
                 continue

@@ -41,10 +41,7 @@ _pa: pyaudio.PyAudio | None = None
 _mic_stream = None
 _downsample_factor = 1
 _wake_audio_ready = False
-_wake_listen_enabled = True
 _mic_lock = threading.Lock()
-_drain_thread: threading.Thread | None = None
-_drain_stop = threading.Event()
 
 
 def _chunk_energy(buffer: bytes) -> float:
@@ -63,34 +60,14 @@ def reset_wake_model():
             logger.warning("唤醒模型 reset 失败: %s", e)
 
 
-def pause_wake_listen():
-    """对话期间停止唤醒检测，后台 drain 防止缓冲区堆积。"""
-    global _wake_listen_enabled
-    _wake_listen_enabled = False
-    _start_drain_thread()
-
-
-def resume_wake_listen():
-    """回到休眠监听（不 drain，供 abort 等路径快速恢复）。"""
-    _stop_drain_thread()
+def prepare_wake_listen():
+    """丢弃残留音频并清空唤醒模型缓冲后再开启唤醒检测。"""
+    drain_mic(WAKE_PRE_LISTEN_DRAIN_SEC)
     reset_wake_model()
-    global _wake_listen_enabled
-    _wake_listen_enabled = True
-
-
-def prepare_wake_listen(drain_sec: float | None = None):
-    """丢弃残留音频后再开启唤醒检测。"""
-    global _wake_listen_enabled
-    _wake_listen_enabled = False
-    sec = WAKE_PRE_LISTEN_DRAIN_SEC if drain_sec is None else drain_sec
-    drain_mic(sec)
-    reset_wake_model()
-    _wake_listen_enabled = True
 
 
 def drain_mic(seconds: float = 0):
-    """同步丢弃麦克风音频；会先停止后台 drain 线程。"""
-    _stop_drain_thread()
+    """同步丢弃麦克风音频。"""
     if seconds <= 0 or _mic_stream is None:
         return
     logger.info("麦克风 drain %.1fs", seconds)
@@ -123,35 +100,6 @@ def _read_mic_bytes() -> bytes:
     return _read_mic_frame().tobytes()
 
 
-def _drain_loop():
-    while not _drain_stop.is_set():
-        if _mic_stream is None:
-            time.sleep(0.05)
-            continue
-        try:
-            _read_mic_frame()
-        except Exception as e:
-            logger.warning("麦克风 drain 异常: %s", e)
-            break
-
-
-def _start_drain_thread():
-    global _drain_thread
-    if _drain_thread is not None and _drain_thread.is_alive():
-        return
-    _drain_stop.clear()
-    _drain_thread = threading.Thread(target=_drain_loop, name="mic-drain", daemon=True)
-    _drain_thread.start()
-
-
-def _stop_drain_thread():
-    _drain_stop.set()
-    global _drain_thread
-    if _drain_thread is not None:
-        _drain_thread.join(timeout=2.0)
-        _drain_thread = None
-
-
 def _write_wav(path: str, pcm: bytes, sample_rate: int = MIC_SAMPLE_RATE):
     with wave.open(path, "wb") as wf:
         wf.setnchannels(1)
@@ -164,10 +112,6 @@ def record_audio():
     if _mic_stream is None:
         logger.error("麦克风流未打开")
         return None
-
-    was_draining = _drain_thread is not None and _drain_thread.is_alive()
-    if was_draining:
-        _stop_drain_thread()
 
     record_hold_event.clear()
     logger.info("开始录音")
@@ -228,9 +172,6 @@ def record_audio():
     except Exception as e:
         logger.error("录音失败: %s", e)
         return None
-    finally:
-        if was_draining and not _wake_listen_enabled:
-            _start_drain_thread()
 
 
 def calibrate_noise(model_path: str | os.PathLike):
@@ -336,7 +277,6 @@ def wait_for_wake_word(model_path: str | os.PathLike):
     while True:
         if wake_event.is_set():
             logger.info("唤醒 source=button")
-            pause_wake_listen()
             wake_display()
             return True
 
@@ -356,7 +296,6 @@ def wait_for_wake_word(model_path: str | os.PathLike):
                         score,
                         hit_streak,
                     )
-                    pause_wake_listen()
                     wake_display()
                     return True
                 triggered = True
