@@ -1,13 +1,15 @@
 openai
 duckduckgo-search
 fastapi
-uvicorn
+uvicorn[standard]
 python-dotenv
 dashscope
 edge-tts
 pygame
 openwakeword
 numpy
+pyaudio
+SpeechRecognition
 sounddevice
 scipy
 jinja2

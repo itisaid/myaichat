@@ -41,68 +41,101 @@ def _chunk_energy(buffer: bytes) -> float:
     return float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
 
 
+def _pause_wake_mic():
+    """录音前释放唤醒占用的麦克风流（USB 麦通常不能双开）。"""
+    global _mic_stream
+    if _mic_stream is not None:
+        try:
+            _mic_stream.stop_stream()
+            _mic_stream.close()
+        except Exception as e:
+            logger.warning("释放唤醒麦克风流失败: %s", e)
+        _mic_stream = None
+
+
+def _resume_wake_mic():
+    """录音结束后恢复唤醒麦克风流。"""
+    global _mic_stream
+    if not _wake_audio_ready or _pa is None or _mic_stream is not None:
+        return
+    _mic_stream = _open_mic_stream(_pa)
+    if _mic_stream is None:
+        logger.error("恢复唤醒麦克风流失败")
+
+
 def record_audio():
     record_hold_event.clear()
     logger.info("开始录音")
 
-    with suppress_native_stderr():
-        with sr.Microphone() as source:
-            chunk = source.CHUNK
-            sample_width = source.SAMPLE_WIDTH
-            sample_rate = source.SAMPLE_RATE
+    _pause_wake_mic()
+    try:
+        with suppress_native_stderr():
+            with sr.Microphone() as source:
+                if source.stream is None:
+                    logger.error("麦克风打开失败，stream 为 None")
+                    return None
 
-            frames: list[bytes] = []
-            wait_deadline = time.time() + RECORD_START_TIMEOUT
-            while time.time() < wait_deadline:
-                buffer = source.stream.read(chunk)
-                if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                chunk = source.CHUNK
+                sample_width = source.SAMPLE_WIDTH
+                sample_rate = source.SAMPLE_RATE
+
+                frames: list[bytes] = []
+                wait_deadline = time.time() + RECORD_START_TIMEOUT
+                while time.time() < wait_deadline:
+                    buffer = source.stream.read(chunk)
+                    if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                        frames.append(buffer)
+                        break
+                else:
+                    logger.warning("录音超时或音量过低，跳过本轮")
+                    return None
+
+                last_speech_time = time.time()
+                record_start = time.time()
+                hold_was_active = False
+
+                while True:
+                    hold_active = record_hold_event.is_set()
+                    if hold_was_active and not hold_active:
+                        break
+                    hold_was_active = hold_active
+
+                    now = time.time()
+                    elapsed = now - record_start
+
+                    if elapsed >= MAX_HOLD_RECORD_SECONDS:
+                        break
+
+                    if not hold_active:
+                        if elapsed >= PHRASE_TIME_LIMIT:
+                            break
+                        if now - last_speech_time >= recognizer.pause_threshold:
+                            break
+
+                    buffer = source.stream.read(chunk)
                     frames.append(buffer)
-                    break
-            else:
-                logger.warning("录音超时或音量过低，跳过本轮")
-                return None
+                    if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                        last_speech_time = time.time()
 
-            last_speech_time = time.time()
-            record_start = time.time()
-            hold_was_active = False
+                audio = sr.AudioData(b"".join(frames), sample_rate, sample_width)
+                pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
+                samples = np.frombuffer(pcm, dtype=np.int16)
+                if samples.size == 0:
+                    logger.warning("录音为空，跳过本轮")
+                    return None
+                rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+                if rms < MIN_RECORD_RMS:
+                    logger.warning("录音音量过低 (rms=%.0f)，跳过本轮", rms)
+                    return None
 
-            while True:
-                hold_active = record_hold_event.is_set()
-                if hold_was_active and not hold_active:
-                    break
-                hold_was_active = hold_active
-
-                now = time.time()
-                elapsed = now - record_start
-
-                if elapsed >= MAX_HOLD_RECORD_SECONDS:
-                    break
-
-                if not hold_active:
-                    if elapsed >= PHRASE_TIME_LIMIT:
-                        break
-                    if now - last_speech_time >= recognizer.pause_threshold:
-                        break
-
-                buffer = source.stream.read(chunk)
-                frames.append(buffer)
-                if _chunk_energy(buffer) >= recognizer.energy_threshold:
-                    last_speech_time = time.time()
-
-            audio = sr.AudioData(b"".join(frames), sample_rate, sample_width)
-            pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
-            samples = np.frombuffer(pcm, dtype=np.int16)
-            if samples.size == 0:
-                logger.warning("录音为空，跳过本轮")
-                return None
-            rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
-            if rms < MIN_RECORD_RMS:
-                logger.warning("录音音量过低 (rms=%.0f)，跳过本轮", rms)
-                return None
-
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
-                tf.write(audio.get_wav_data(convert_rate=16000))
-                return tf.name
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                    tf.write(audio.get_wav_data(convert_rate=16000))
+                    return tf.name
+    except Exception as e:
+        logger.error("录音失败: %s", e)
+        return None
+    finally:
+        _resume_wake_mic()
 
 
 def calibrate_noise():
@@ -150,6 +183,13 @@ def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
 
     if _wake_audio_ready and _mic_stream is not None:
         return True
+
+    if _wake_audio_ready and _pa is not None:
+        _mic_stream = _open_mic_stream(_pa)
+        if _mic_stream is not None:
+            return True
+        logger.error("唤醒麦克风流恢复失败")
+        return False
 
     model_path = os.fspath(model_path)
     logger.info("正在加载唤醒模型...")
