@@ -57,13 +57,35 @@ def _read_pcm_from_wav(path: str) -> bytes:
     return pcm
 
 
-def _parse_result_text(b64_text: str) -> str:
-    data = json.loads(base64.b64decode(b64_text))
+def _words_from_result(data: dict) -> str:
     return "".join(
         cw.get("w", "")
         for ws in data.get("ws", [])
         for cw in ws.get("cw", [])
     )
+
+
+def _merge_result_segment(segments: list[str], b64_text: str) -> None:
+    """合并讯飞返回片段；未开 wpgs 时各帧为增量追加，不可覆盖。"""
+    data = json.loads(base64.b64decode(b64_text))
+    ret = data.get("ret")
+    if ret not in (None, 0):
+        logger.error("讯飞 ASR 业务错误 ret=%s", ret)
+        return
+
+    words = _words_from_result(data)
+    if not words:
+        return
+
+    pgs = data.get("pgs")
+    if pgs == "rpl":
+        rg = data.get("rg") or []
+        if len(rg) == 2:
+            start, end = rg
+            del segments[start - 1 : end]
+        segments.append(words)
+    else:
+        segments.append(words)
 
 
 def _first_frame(audio_b64: str, seq: int) -> dict:
@@ -146,7 +168,7 @@ def transcribe(wav_path: str) -> str:
 
     url = _create_auth_url()
     ws = None
-    result_text = ""
+    segments: list[str] = []
     seq = 0
 
     try:
@@ -194,14 +216,12 @@ def transcribe(wav_path: str) -> str:
             result = payload.get("result") or {}
             b64_text = result.get("text")
             if b64_text:
-                parsed = _parse_result_text(b64_text)
-                if parsed:
-                    result_text = parsed
+                _merge_result_segment(segments, b64_text)
 
             if header.get("status") == 2:
                 break
 
-        text = result_text.strip()
+        text = "".join(segments).strip()
         if text.lower() in _EMPTY_PLACEHOLDERS:
             return ""
         return text
