@@ -6,9 +6,11 @@ import time
 from asr import transcribe
 from audio import (
     calibrate_noise,
+    drain_mic,
     ensure_wake_audio,
     play_audio,
     record_audio,
+    resume_wake_listen,
     stop_playback,
     wait_for_wake_word,
 )
@@ -18,7 +20,7 @@ from config import (
     TEXT_DEBUG,
     WAKE_AUDIO_PATH,
     WAKE_MODEL_PATH,
-    WAKE_POST_PLAYBACK_COOLDOWN,
+    WAKE_POST_PLAYBACK_DRAIN_SEC,
     app_state,
     cancel_event,
     load_system_prompt,
@@ -44,6 +46,7 @@ def _sleeping_status() -> str:
 async def abort_to_sleeping(manager: ConnectionManager):
     cancel_event.clear()
     stop_playback()
+    resume_wake_listen()
     logger.info("用户终止 -> 休眠")
     await manager.broadcast_status(_sleeping_status(), "sleeping", stop_enabled=False)
 
@@ -83,7 +86,7 @@ async def smart_speaker_loop(manager: ConnectionManager):
     if TEXT_DEBUG:
         logger.debug("跳过麦克风校准")
     else:
-        calibrate_noise()
+        calibrate_noise(WAKE_MODEL_PATH)
 
     while True:
         await manager.broadcast_status(_sleeping_status(), "sleeping", stop_enabled=False)
@@ -229,8 +232,9 @@ async def smart_speaker_loop(manager: ConnectionManager):
             logger.info("合成完成 (%.1fs)", tts_elapsed)
 
             await play_audio(REPLY_AUDIO_PATH)
-            if WAKE_POST_PLAYBACK_COOLDOWN > 0:
-                await asyncio.sleep(WAKE_POST_PLAYBACK_COOLDOWN)
+            if WAKE_POST_PLAYBACK_DRAIN_SEC > 0:
+                await asyncio.to_thread(drain_mic, WAKE_POST_PLAYBACK_DRAIN_SEC)
+            resume_wake_listen()
             if cancel_event.is_set():
                 await abort_to_sleeping(manager)
                 continue

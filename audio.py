@@ -1,7 +1,9 @@
 import asyncio
 import os
 import tempfile
+import threading
 import time
+import wave
 
 import edge_tts
 import numpy as np
@@ -17,8 +19,6 @@ from config import (
     PHRASE_TIME_LIMIT,
     RECORD_START_TIMEOUT,
     TEXT_DEBUG,
-    WAKE_KEYWORD_HITS,
-    WAKE_MIC_WARMUP_SEC,
     WAKE_WORD_THRESHOLD,
     cancel_event,
     record_hold_event,
@@ -29,12 +29,19 @@ from log_config import get_logger, suppress_native_stderr
 logger = get_logger("audio")
 recognizer = sr.Recognizer()
 
+MIC_SAMPLE_RATE = 16000
+MIC_SAMPLE_WIDTH = 2
+FRAME_SAMPLES = 1280
+
 _wake_model: Model | None = None
 _pa: pyaudio.PyAudio | None = None
 _mic_stream = None
 _downsample_factor = 1
 _wake_audio_ready = False
-_mic_needs_warmup = False
+_wake_listen_enabled = True
+_mic_lock = threading.Lock()
+_drain_thread: threading.Thread | None = None
+_drain_stop = threading.Event()
 
 
 def _chunk_energy(buffer: bytes) -> float:
@@ -44,105 +51,172 @@ def _chunk_energy(buffer: bytes) -> float:
     return float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
 
 
-def _close_wake_mic():
-    """关闭唤醒麦克风流；对话处理期间保持关闭，避免缓冲区堆积误唤醒。"""
-    global _mic_stream, _pa
-    if _mic_stream is not None:
+def pause_wake_listen():
+    """对话期间停止唤醒检测，后台 drain 防止缓冲区堆积。"""
+    global _wake_listen_enabled
+    _wake_listen_enabled = False
+    _start_drain_thread()
+
+
+def resume_wake_listen():
+    """回到休眠监听：停止 drain，恢复唤醒检测。"""
+    _stop_drain_thread()
+    global _wake_listen_enabled
+    _wake_listen_enabled = True
+
+
+def drain_mic(seconds: float = 0):
+    """同步丢弃麦克风音频；会先停止后台 drain 线程。"""
+    _stop_drain_thread()
+    if seconds <= 0 or _mic_stream is None:
+        return
+    logger.info("麦克风 drain %.1fs", seconds)
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        _read_mic_frame()
+
+
+def _read_mic_frame() -> np.ndarray:
+    with _mic_lock:
+        if _mic_stream is None:
+            return np.array([], dtype=np.int16)
+        if _downsample_factor == 1:
+            pcm = _mic_stream.read(FRAME_SAMPLES, exception_on_overflow=False)
+            return np.frombuffer(pcm, dtype=np.int16)
+        pcm = _mic_stream.read(FRAME_SAMPLES * 3, exception_on_overflow=False)
+        return np.frombuffer(pcm, dtype=np.int16)[::3]
+
+
+def _read_mic_bytes() -> bytes:
+    return _read_mic_frame().tobytes()
+
+
+def _drain_loop():
+    while not _drain_stop.is_set():
+        if _mic_stream is None:
+            time.sleep(0.05)
+            continue
         try:
-            _mic_stream.stop_stream()
-            _mic_stream.close()
+            _read_mic_frame()
         except Exception as e:
-            logger.warning("关闭唤醒麦克风流失败: %s", e)
-        _mic_stream = None
-    if _pa is not None:
-        try:
-            _pa.terminate()
-        except Exception as e:
-            logger.warning("释放 PyAudio 失败: %s", e)
-        _pa = None
+            logger.warning("麦克风 drain 异常: %s", e)
+            break
+
+
+def _start_drain_thread():
+    global _drain_thread
+    if _drain_thread is not None and _drain_thread.is_alive():
+        return
+    _drain_stop.clear()
+    _drain_thread = threading.Thread(target=_drain_loop, name="mic-drain", daemon=True)
+    _drain_thread.start()
+
+
+def _stop_drain_thread():
+    _drain_stop.set()
+    global _drain_thread
+    if _drain_thread is not None:
+        _drain_thread.join(timeout=2.0)
+        _drain_thread = None
+
+
+def _write_wav(path: str, pcm: bytes, sample_rate: int = MIC_SAMPLE_RATE):
+    with wave.open(path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(MIC_SAMPLE_WIDTH)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
 
 
 def record_audio():
+    if _mic_stream is None:
+        logger.error("麦克风流未打开")
+        return None
+
+    was_draining = _drain_thread is not None and _drain_thread.is_alive()
+    if was_draining:
+        _stop_drain_thread()
+
     record_hold_event.clear()
     logger.info("开始录音")
 
     try:
-        with suppress_native_stderr():
-            with sr.Microphone() as source:
-                if source.stream is None:
-                    logger.error("麦克风打开失败，stream 为 None")
-                    return None
+        frames: list[bytes] = []
+        wait_deadline = time.time() + RECORD_START_TIMEOUT
+        while time.time() < wait_deadline:
+            buffer = _read_mic_bytes()
+            if _chunk_energy(buffer) >= recognizer.energy_threshold:
+                frames.append(buffer)
+                break
+        else:
+            logger.warning("录音超时或音量过低，跳过本轮")
+            return None
 
-                chunk = source.CHUNK
-                sample_width = source.SAMPLE_WIDTH
-                sample_rate = source.SAMPLE_RATE
+        last_speech_time = time.time()
+        record_start = time.time()
+        hold_was_active = False
 
-                frames: list[bytes] = []
-                wait_deadline = time.time() + RECORD_START_TIMEOUT
-                while time.time() < wait_deadline:
-                    buffer = source.stream.read(chunk)
-                    if _chunk_energy(buffer) >= recognizer.energy_threshold:
-                        frames.append(buffer)
-                        break
-                else:
-                    logger.warning("录音超时或音量过低，跳过本轮")
-                    return None
+        while True:
+            hold_active = record_hold_event.is_set()
+            if hold_was_active and not hold_active:
+                break
+            hold_was_active = hold_active
 
+            now = time.time()
+            elapsed = now - record_start
+
+            if elapsed >= MAX_HOLD_RECORD_SECONDS:
+                break
+
+            if not hold_active:
+                if elapsed >= PHRASE_TIME_LIMIT:
+                    break
+                if now - last_speech_time >= recognizer.pause_threshold:
+                    break
+
+            buffer = _read_mic_bytes()
+            frames.append(buffer)
+            if _chunk_energy(buffer) >= recognizer.energy_threshold:
                 last_speech_time = time.time()
-                record_start = time.time()
-                hold_was_active = False
 
-                while True:
-                    hold_active = record_hold_event.is_set()
-                    if hold_was_active and not hold_active:
-                        break
-                    hold_was_active = hold_active
+        pcm = b"".join(frames)
+        samples = np.frombuffer(pcm, dtype=np.int16)
+        if samples.size == 0:
+            logger.warning("录音为空，跳过本轮")
+            return None
+        rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+        if rms < MIN_RECORD_RMS:
+            logger.warning("录音音量过低 (rms=%.0f)，跳过本轮", rms)
+            return None
 
-                    now = time.time()
-                    elapsed = now - record_start
-
-                    if elapsed >= MAX_HOLD_RECORD_SECONDS:
-                        break
-
-                    if not hold_active:
-                        if elapsed >= PHRASE_TIME_LIMIT:
-                            break
-                        if now - last_speech_time >= recognizer.pause_threshold:
-                            break
-
-                    buffer = source.stream.read(chunk)
-                    frames.append(buffer)
-                    if _chunk_energy(buffer) >= recognizer.energy_threshold:
-                        last_speech_time = time.time()
-
-                audio = sr.AudioData(b"".join(frames), sample_rate, sample_width)
-                pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
-                samples = np.frombuffer(pcm, dtype=np.int16)
-                if samples.size == 0:
-                    logger.warning("录音为空，跳过本轮")
-                    return None
-                rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
-                if rms < MIN_RECORD_RMS:
-                    logger.warning("录音音量过低 (rms=%.0f)，跳过本轮", rms)
-                    return None
-
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
-                    tf.write(audio.get_wav_data(convert_rate=16000))
-                    return tf.name
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            wav_path = tf.name
+        _write_wav(wav_path, pcm)
+        return wav_path
     except Exception as e:
         logger.error("录音失败: %s", e)
         return None
+    finally:
+        if was_draining and not _wake_listen_enabled:
+            _start_drain_thread()
 
 
-def calibrate_noise():
+def calibrate_noise(model_path: str | os.PathLike):
     logger.info("正在校准环境噪音，请保持安静 1 秒...")
+    if not _ensure_wake_audio(model_path):
+        logger.error("麦克风初始化失败")
+        return
     try:
-        with suppress_native_stderr():
-            with sr.Microphone() as global_source:
-                recognizer.adjust_for_ambient_noise(global_source, duration=1)
-        logger.info("噪声校准完成")
+        energies: list[float] = []
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            energies.append(_chunk_energy(_read_mic_bytes()))
+        if energies:
+            avg = sum(energies) / len(energies)
+            recognizer.energy_threshold = max(300, avg * 1.2)
+        logger.info("噪声校准完成 threshold=%.0f", recognizer.energy_threshold)
     except Exception as e:
-        logger.error("麦克风初始化失败: %s", e)
+        logger.error("麦克风校准失败: %s", e)
 
 
 def _open_mic_stream(pa: pyaudio.PyAudio):
@@ -154,7 +228,7 @@ def _open_mic_stream(pa: pyaudio.PyAudio):
                 channels=1,
                 rate=16000,
                 input=True,
-                frames_per_buffer=1280,
+                frames_per_buffer=FRAME_SAMPLES,
             )
             _downsample_factor = 1
             return stream
@@ -166,7 +240,7 @@ def _open_mic_stream(pa: pyaudio.PyAudio):
                     channels=1,
                     rate=48000,
                     input=True,
-                    frames_per_buffer=1280 * 3,
+                    frames_per_buffer=FRAME_SAMPLES * 3,
                 )
                 _downsample_factor = 3
                 return stream
@@ -176,13 +250,13 @@ def _open_mic_stream(pa: pyaudio.PyAudio):
 
 
 def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
-    global _wake_model, _pa, _mic_stream, _wake_audio_ready, _mic_needs_warmup
+    global _wake_model, _pa, _mic_stream, _wake_audio_ready
 
     if _wake_audio_ready and _mic_stream is not None:
         return True
 
+    model_path = os.fspath(model_path)
     if _wake_model is None:
-        model_path = os.fspath(model_path)
         logger.info("正在加载唤醒模型...")
         with suppress_native_stderr():
             try:
@@ -191,7 +265,6 @@ def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
                 )
             except TypeError:
                 _wake_model = Model(wakeword_model_paths=[model_path])
-        _wake_audio_ready = True
         logger.info("唤醒模型已加载")
 
     if _pa is None:
@@ -201,31 +274,12 @@ def _ensure_wake_audio(model_path: str | os.PathLike) -> bool:
     if _mic_stream is None:
         _mic_stream = _open_mic_stream(_pa)
         if _mic_stream is None:
+            _wake_audio_ready = False
             return False
-        _mic_needs_warmup = True
 
+    _wake_audio_ready = True
     return True
 
-
-
-def _read_wake_frame() -> np.ndarray:
-    if _downsample_factor == 1:
-        pcm = _mic_stream.read(1280, exception_on_overflow=False)
-        return np.frombuffer(pcm, dtype=np.int16)
-    pcm = _mic_stream.read(1280 * 3, exception_on_overflow=False)
-    return np.frombuffer(pcm, dtype=np.int16)[::3]
-
-
-def _warmup_wake_mic() -> None:
-    global _mic_needs_warmup
-    if not _mic_needs_warmup or _mic_stream is None or WAKE_MIC_WARMUP_SEC <= 0:
-        _mic_needs_warmup = False
-        return
-    logger.info("唤醒麦克风预热 %.1fs", WAKE_MIC_WARMUP_SEC)
-    deadline = time.time() + WAKE_MIC_WARMUP_SEC
-    while time.time() < deadline:
-        _read_wake_frame()
-    _mic_needs_warmup = False
 
 def wait_for_wake_word(model_path: str | os.PathLike):
     if TEXT_DEBUG:
@@ -241,36 +295,24 @@ def wait_for_wake_word(model_path: str | os.PathLike):
     if not _ensure_wake_audio(model_path):
         return False
 
+    resume_wake_listen()
     wake_event.clear()
-    _warmup_wake_mic()
-    hit_streak = 0
 
     while True:
         if wake_event.is_set():
             logger.info("唤醒 source=button")
-            _close_wake_mic()
+            pause_wake_listen()
             wake_display()
             return True
 
-        prediction = _wake_model.predict(_read_wake_frame())
+        prediction = _wake_model.predict(_read_mic_frame())
 
-        triggered = False
         for _mdl_name, score in prediction.items():
             if score > WAKE_WORD_THRESHOLD:
-                hit_streak += 1
-                if hit_streak >= WAKE_KEYWORD_HITS:
-                    logger.info(
-                        "唤醒 source=keyword score=%.2f hits=%d",
-                        score,
-                        hit_streak,
-                    )
-                    _close_wake_mic()
-                    wake_display()
-                    return True
-                triggered = True
-                break
-        if not triggered:
-            hit_streak = 0
+                logger.info("唤醒 source=keyword score=%.2f", score)
+                pause_wake_listen()
+                wake_display()
+                return True
 
 
 async def play_audio(path: str | os.PathLike):
